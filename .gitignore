@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+#Other
+config.json
+.vscode
+.gitignore
+*.db
+*.dSYM*
+target

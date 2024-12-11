@@ -9,16 +9,23 @@ INCLUDES = -I/opt/homebrew/include -I/usr/local/include -Iinclude
 LDFLAGS = -L/opt/homebrew/lib -L/usr/local/lib
 LIBS = -ljsoncpp -lcurl -lsqlite3 -lssl -lcrypto
 
+# 目錄設置
+TARGET_DIR = target
+OBJ_DIR = $(TARGET_DIR)/obj
+
 # 目標文件
-TARGET = funding_rate_fetcher
+TARGET = $(TARGET_DIR)/funding_rate_fetcher
 
 # 源文件
 SOURCES = funding_rate_fetcher.cpp \
           lib/exchange/bybit_api.cpp \
           lib/config.cpp
 
-# 目標文件 (保持在當前目錄)
-OBJECTS = $(notdir $(SOURCES:.cpp=.o))
+# 目標文件 (放在 obj 目錄)
+OBJECTS = $(addprefix $(OBJ_DIR)/, $(notdir $(SOURCES:.cpp=.o)))
+
+# 創建必要的目錄
+$(shell mkdir -p $(TARGET_DIR) $(OBJ_DIR))
 
 # 默認目標
 all: $(TARGET)
@@ -28,18 +35,18 @@ $(TARGET): $(OBJECTS)
 	$(CXX) $(OBJECTS) $(LDFLAGS) $(LIBS) -o $(TARGET)
 
 # 編譯規則
-%.o: %.cpp
+$(OBJ_DIR)/%.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-%.o: lib/exchange/%.cpp
+$(OBJ_DIR)/%.o: lib/exchange/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-%.o: lib/%.cpp
+$(OBJ_DIR)/%.o: lib/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # 清理規則
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -rf $(TARGET_DIR)
 
 # 重新編譯
 rebuild: clean all
