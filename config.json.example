@@ -1,12 +1,16 @@
 {
     "bybit": {
-        "api_key": "YOUR_API_KEY",
-        "api_secret": "YOUR_API_SECRET",
+        "api_key": "",
+        "api_secret": "",
         "base_url": "https://api.bybit.com",
-        "default_leverage": 5
+        "default_leverage": 2
     },
     "trading": {
-        "min_quantity": 0.001,
+        "min_trade_amount": 100,
+        "max_trade_amount": 1000,
+        "max_positions": 10,
+        "stop_loss_percentage": 5,
         "check_interval_hours": 1
-    }
+    },
+    "top_pairs_count": 5
 }

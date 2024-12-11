@@ -1,9 +1,9 @@
 # 編譯器設置
 CXX = clang++
-CXXFLAGS = -std=gnu++20 -Wall -g -I/opt/homebrew/include -I/usr/local/include
+CXXFLAGS = -std=gnu++20 -Wall -g
 
 # 包含目錄
-INCLUDES = -I/opt/homebrew/include
+INCLUDES = -I/opt/homebrew/include -I/usr/local/include -Iinclude
 
 # 庫目錄和庫文件
 LDFLAGS = -L/opt/homebrew/lib -L/usr/local/lib
@@ -13,10 +13,12 @@ LIBS = -ljsoncpp -lcurl -lsqlite3 -lssl -lcrypto
 TARGET = funding_rate_fetcher
 
 # 源文件
-SOURCES = funding_rate_fetcher.cpp
+SOURCES = funding_rate_fetcher.cpp \
+          lib/exchange/bybit_api.cpp \
+          lib/config.cpp
 
-# 目標文件
-OBJECTS = $(SOURCES:.cpp=.o)
+# 目標文件 (保持在當前目錄)
+OBJECTS = $(notdir $(SOURCES:.cpp=.o))
 
 # 默認目標
 all: $(TARGET)
@@ -27,6 +29,12 @@ $(TARGET): $(OBJECTS)
 
 # 編譯規則
 %.o: %.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+%.o: lib/exchange/%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+%.o: lib/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # 清理規則
