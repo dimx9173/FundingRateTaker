@@ -1,13 +1,13 @@
 # 編譯器設置
 CXX = clang++
-CXXFLAGS = -std=gnu++14 -Wall -g
+CXXFLAGS = -std=gnu++20 -Wall -g -I/opt/homebrew/include -I/usr/local/include
 
 # 包含目錄
 INCLUDES = -I/opt/homebrew/include
 
 # 庫目錄和庫文件
-LDFLAGS = -L/opt/homebrew/lib
-LIBS = -ljsoncpp -lcurl
+LDFLAGS = -L/opt/homebrew/lib -L/usr/local/lib
+LIBS = -ljsoncpp -lcurl -lsqlite3 -lssl -lcrypto
 
 # 目標文件
 TARGET = funding_rate_fetcher
