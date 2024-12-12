@@ -6,11 +6,23 @@
         "default_leverage": 2
     },
     "trading": {
+        "total_investment": 10000,
         "min_trade_amount": 100,
         "max_trade_amount": 1000,
         "max_positions": 10,
         "stop_loss_percentage": 5,
-        "check_interval_hours": 1
+        "check_interval_minutes": 5,
+        "position_limits": {
+            "min_position_size": 0.001,
+            "max_position_size": 1.0,
+            "max_total_position": 0.5
+        },
+        "risk_management": {
+            "max_leverage": 5,
+            "max_single_position_risk": 0.1,
+            "position_scaling": true,
+            "scaling_factor": 1.5
+        }
     },
     "top_pairs_count": 5
 }

@@ -24,13 +24,25 @@ public:
     std::string getBybitApiSecret() const;
     std::string getBybitBaseUrl() const;
     int getDefaultLeverage() const;
-    int getCheckIntervalHours() const;
     int getTopPairsCount() const;
     std::vector<std::string> getTradingPairs() const;
     double getMinTradeAmount() const;
     double getMaxTradeAmount() const;
     int getMaxPositions() const;
     double getStopLossPercentage() const;
+
+    double getTotalInvestment() const;
+    double getMinPositionSize() const;
+    double getMaxPositionSize() const;
+    double getMaxTotalPosition() const;
+    double getMaxSinglePositionRisk() const;
+    bool getPositionScaling() const;
+    double getScalingFactor() const;
+    int getCheckIntervalMinutes() const;
+
+    std::string getPreferredExchange() const {
+        return config["preferred_exchange"].asString();
+    }
 };
 
 #endif // CONFIG_H 

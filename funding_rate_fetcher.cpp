@@ -16,8 +16,17 @@
 #include <memory>
 #include <sstream>
 #include <iomanip>
-#include "config.h"
+#include "include/config.h"
 #include "exchange/bybit_api.h"
+#include "exchange/exchange_factory.h"
+
+
+// 建議添加專門的日誌類
+class Logger {
+    void info(const std::string& message);
+    void error(const std::string& message);
+    void warning(const std::string& message);
+};
 
 std::vector<std::string> splitString(const std::string& str, const std::string& delimiter) {
     std::vector<std::string> tokens;
@@ -32,23 +41,22 @@ std::vector<std::string> splitString(const std::string& str, const std::string& 
     return tokens;
 }
 
-// 资金费率获取模块
+// 资金费率获模块
 class FundingRateFetcher {
 private:
-    BybitAPI& api;
+    IExchange& exchange;
     int topPairsCount;
 
 public:
-    FundingRateFetcher(BybitAPI& api) : 
-        api(api),
+    FundingRateFetcher(IExchange& exchange) : 
+        exchange(exchange),
         topPairsCount(Config::getInstance().getTopPairsCount()) {}
 
     std::vector<std::pair<std::string, double>> getTopFundingRates() {
-        auto rates = api.getFundingRates();
+        auto rates = exchange.getFundingRates();
         std::sort(rates.begin(), rates.end(), 
                  [](auto& a, auto& b) { return std::abs(a.second) > std::abs(b.second); });
         
-        // 只保留前X個
         if (rates.size() > topPairsCount) {
             rates.resize(topPairsCount);
         }
@@ -196,24 +204,65 @@ class TradingModule {
 private:
     static std::mutex mutex_;
     static std::unique_ptr<TradingModule> instance;
-    BybitAPI& api;
+    IExchange& exchange;
     SQLiteStorage& storage;
 
-    TradingModule() : 
-        api(BybitAPI::getInstance()),
+    TradingModule(IExchange& exchange) : 
+        exchange(exchange),
         storage(SQLiteStorage::getInstance()) {}
 
+    double calculatePositionSize(const std::string& symbol, double rate) {
+        const Config& config = Config::getInstance();
+        double totalInvestment = config.getTotalInvestment();
+        double availableEquity = exchange.getTotalEquity();
+        
+        if (availableEquity <= 0 || availableEquity < totalInvestment * 0.1) {
+            std::cout << "可用資金不足" << std::endl;
+            return 0.0;
+        }
+
+        double basePosition = totalInvestment / config.getTopPairsCount();
+        
+        double adjustedPosition = basePosition;
+        if (config.getPositionScaling()) {
+            double scalingFactor = config.getScalingFactor();
+            adjustedPosition = basePosition * (1 + std::abs(rate) * scalingFactor);
+        }
+
+        adjustedPosition = std::min(adjustedPosition, 
+                                  totalInvestment * config.getMaxSinglePositionRisk());
+        adjustedPosition = std::max(adjustedPosition, 
+                                  config.getMinPositionSize() * exchange.getSpotPrice(symbol));
+        adjustedPosition = std::min(adjustedPosition, 
+                                  config.getMaxPositionSize() * exchange.getSpotPrice(symbol));
+
+        return adjustedPosition;
+    }
+
+    bool checkTotalPositionLimit() {
+        double totalPositionValue = 0.0;
+        auto positions = exchange.getPositions();
+        
+        for (const auto& pos : positions["result"]["list"]) {
+            totalPositionValue += std::stod(pos["positionValue"].asString());
+        }
+
+        return totalPositionValue < 
+               (Config::getInstance().getTotalInvestment() * 
+                Config::getInstance().getMaxTotalPosition());
+    }
+
 public:
-    static TradingModule& getInstance() {
+    static TradingModule& getInstance(IExchange& exchange) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!instance) {
-            instance.reset(new TradingModule());
+            instance.reset(new TradingModule(exchange));
         }
         return *instance;
     }
 
     std::vector<std::pair<std::string, double>> getTopFundingRates() {
-        FundingRateFetcher fetcher(api);
+        FundingRateFetcher fetcher(exchange);
         auto rates = fetcher.getTopFundingRates();
         
         std::cout << "\n=== 當前資金費率排名 ===" << std::endl;
@@ -228,33 +277,35 @@ public:
         auto parts = splitString(group, ":");
         if (parts.size() >= 2) {
             std::string symbol = parts[1];
-            api.closePosition(symbol);
+            exchange.closePosition(symbol);
         }
     }
 
     void executeHedgeStrategy(const std::vector<std::pair<std::string, double>>& topRates) {
-        double totalEquity = api.getTotalEquity();
-        if (totalEquity <= 0) {
-            std::cout << "總資金為0，無法進行沖交易" << std::endl;
+        if (!checkTotalPositionLimit()) {
+            std::cout << "已達到總倉位限制" << std::endl;
             return;
         }
 
-        double perPairAmount = totalEquity / 10;  // 每個幣對使用總資金的1/10
-        
         for (const auto& [symbol, rate] : topRates) {
-            double spotPrice = api.getSpotPrice(symbol);
+            double positionSize = calculatePositionSize(symbol, rate);
+            if (positionSize <= 0) continue;
+
+            double spotPrice = exchange.getSpotPrice(symbol);
             if (spotPrice <= 0) continue;
 
-            double spotQty = perPairAmount / spotPrice;
             int leverage = Config::getInstance().getDefaultLeverage();
+            double spotQty = positionSize / spotPrice;
             double contractQty = spotQty * leverage;
 
             std::cout << "\n執行對沖交易: " << symbol << std::endl;
+            std::cout << "資金費率: " << (rate * 100) << "%" << std::endl;
+            std::cout << "倉位大小: " << positionSize << " USDT" << std::endl;
             std::cout << "現貨數量: " << spotQty << std::endl;
             std::cout << "合約數量: " << contractQty << std::endl;
 
-            bool spotOrderSuccess = api.createSpotOrder(symbol, "Buy", spotQty);
-            Json::Value contractOrder = api.createOrder(symbol, "Sell", contractQty);
+            bool spotOrderSuccess = exchange.createSpotOrder(symbol, "Buy", spotQty);
+            Json::Value contractOrder = exchange.createOrder(symbol, "Sell", contractQty);
             bool contractOrderSuccess = contractOrder["retCode"].asInt() == 0;
 
             if (spotOrderSuccess && contractOrderSuccess) {
@@ -267,10 +318,10 @@ public:
                 std::cout << "對沖交易成功: " << symbol << std::endl;
             } else {
                 if (spotOrderSuccess) {
-                    api.createSpotOrder(symbol, "Sell", spotQty);
+                    exchange.createSpotOrder(symbol, "Sell", spotQty);
                 }
                 if (contractOrderSuccess) {
-                    api.closePosition(symbol);
+                    exchange.closePosition(symbol);
                 }
                 std::cout << "對沖交易失敗，已平倉: " << symbol << std::endl;
             }
@@ -285,24 +336,22 @@ std::unique_ptr<TradingModule> TradingModule::instance;
 void scheduleTask() {
     while (true) {
         try {
-            auto& api = BybitAPI::getInstance();
+            IExchange& exchange = ExchangeFactory::createExchange(
+                Config::getInstance().getPreferredExchange()
+            );
             auto& storage = SQLiteStorage::getInstance();
-            auto& trader = TradingModule::getInstance();
+            auto& trader = TradingModule::getInstance(exchange);
 
-            // 檢查��金
-            double totalEquity = api.getTotalEquity();
+            double totalEquity = exchange.getTotalEquity();
             if (totalEquity <= 0) {
                 std::cout << "總資金為0，跳過本次交易" << std::endl;
                 continue;
             }
 
-            // 獲取並執行交易
             auto topRates = trader.getTopFundingRates();
             
-            // 關閉不在前X名的持倉
             auto activeGroups = storage.getActiveTradeGroups();
             for (const auto& group : activeGroups) {
-                // 解析交易組 ID
                 auto parts = splitString(group, ":");
                 std::string symbol = parts[1];
                 
@@ -319,10 +368,8 @@ void scheduleTask() {
                 }
             }
 
-            // 執行新的交易
             trader.executeHedgeStrategy(topRates);
 
-            // 存儲資金費率數據
             for (const auto& [symbol, rate] : topRates) {
                 storage.storeTradeData(symbol, rate);
             }
@@ -331,9 +378,8 @@ void scheduleTask() {
             std::cerr << "錯誤: " << e.what() << std::endl;
         }
 
-        // 等待一小時
         std::this_thread::sleep_for(
-            std::chrono::hours(Config::getInstance().getCheckIntervalHours())
+            std::chrono::minutes(Config::getInstance().getCheckIntervalMinutes())
         );
     }
 }

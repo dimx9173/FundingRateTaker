@@ -1,4 +1,4 @@
-#include "config.h"
+#include "include/config.h"
 #include <fstream>
 #include <stdexcept>
 
@@ -50,8 +50,8 @@ int Config::getDefaultLeverage() const {
     return config["bybit"]["default_leverage"].asInt();
 }
 
-int Config::getCheckIntervalHours() const {
-    return config["trading"]["check_interval_hours"].asInt();
+int Config::getCheckIntervalMinutes() const {
+    return config["trading"]["check_interval_minutes"].asInt();
 }
 
 int Config::getTopPairsCount() const {
@@ -81,4 +81,32 @@ int Config::getMaxPositions() const {
 
 double Config::getStopLossPercentage() const {
     return config["trading"]["stop_loss_percentage"].asDouble();
+}
+
+double Config::getTotalInvestment() const {
+    return config["trading"]["total_investment"].asDouble();
+}
+
+double Config::getMinPositionSize() const {
+    return config["trading"]["position_limits"]["min_position_size"].asDouble();
+}
+
+double Config::getMaxPositionSize() const {
+    return config["trading"]["position_limits"]["max_position_size"].asDouble();
+}
+
+double Config::getMaxTotalPosition() const {
+    return config["trading"]["position_limits"]["max_total_position"].asDouble();
+}
+
+double Config::getMaxSinglePositionRisk() const {
+    return config["trading"]["risk_management"]["max_single_position_risk"].asDouble();
+}
+
+bool Config::getPositionScaling() const {
+    return config["trading"]["risk_management"]["position_scaling"].asBool();
+}
+
+double Config::getScalingFactor() const {
+    return config["trading"]["risk_management"]["scaling_factor"].asDouble();
 } 
