@@ -35,19 +35,19 @@ Config& Config::getInstance() {
 }
 
 std::string Config::getBybitApiKey() const {
-    return config["bybit"]["api_key"].asString();
+    return config["exchanges"]["bybit"]["api_key"].asString();
 }
 
 std::string Config::getBybitApiSecret() const {
-    return config["bybit"]["api_secret"].asString();
+    return config["exchanges"]["bybit"]["api_secret"].asString();
 }
 
 std::string Config::getBybitBaseUrl() const {
-    return config["bybit"]["base_url"].asString();
+    return config["exchanges"]["bybit"]["base_url"].asString();
 }
 
 int Config::getDefaultLeverage() const {
-    return config["bybit"]["default_leverage"].asInt();
+    return config["exchanges"]["bybit"]["default_leverage"].asInt();
 }
 
 int Config::getCheckIntervalMinutes() const {

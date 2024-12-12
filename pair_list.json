@@ -1,7 +1,5 @@
 {
     "pair_list": [
-        "BTCUSDT",
-        "ETHUSDT",
         "XRPUSDT",
         "SOLUSDT",
         "BNBUSDT",
@@ -9,6 +7,11 @@
         "ADAUSDT",
         "TRXUSDT",
         "AVAXUSDT",
-        "LINKUSDT"
+        "LINKUSDT",
+        "SHIBUSDT",
+        "TONUSDT",
+        "DOTUSDT",
+        "SUIUSDT",
+        "XLMUSDT"
     ]
 }

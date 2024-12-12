@@ -336,19 +336,21 @@ std::unique_ptr<TradingModule> TradingModule::instance;
 void scheduleTask() {
     while (true) {
         try {
-            IExchange& exchange = ExchangeFactory::createExchange(
-                Config::getInstance().getPreferredExchange()
-            );
+            IExchange& exchange = ExchangeFactory::createExchange();
             auto& storage = SQLiteStorage::getInstance();
             auto& trader = TradingModule::getInstance(exchange);
+
+            auto topRates = trader.getTopFundingRates();
 
             double totalEquity = exchange.getTotalEquity();
             if (totalEquity <= 0) {
                 std::cout << "總資金為0，跳過本次交易" << std::endl;
+                std::this_thread::sleep_for(
+                    std::chrono::seconds(10)
+                );
                 continue;
             }
 
-            auto topRates = trader.getTopFundingRates();
             
             auto activeGroups = storage.getActiveTradeGroups();
             for (const auto& group : activeGroups) {

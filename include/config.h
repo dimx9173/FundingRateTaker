@@ -43,6 +43,14 @@ public:
     std::string getPreferredExchange() const {
         return config["preferred_exchange"].asString();
     }
+
+    bool isExchangeEnabled(const std::string& exchange) const {
+        return config["exchanges"][exchange]["enabled"].asBool();
+    }
+
+    Json::Value getExchangeConfig(const std::string& exchange) const {
+        return config["exchanges"][exchange];
+    }
 };
 
 #endif // CONFIG_H 

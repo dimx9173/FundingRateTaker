@@ -1,9 +1,19 @@
 {
-    "bybit": {
-        "api_key": "",
-        "api_secret": "",
-        "base_url": "https://api.bybit.com",
-        "default_leverage": 2
+    "preferred_exchange": "BYBIT",
+    "exchanges": {
+        "bybit": {
+            "enabled": true,
+            "api_key": "",
+            "api_secret": "",
+            "base_url": "https://api.bybit.com",
+            "default_leverage": 2
+        },
+        "binance": {
+            "enabled": false,
+            "api_key": "",
+            "api_secret": "",
+            "base_url": "https://api.binance.com"
+        }
     },
     "trading": {
         "total_investment": 10000,

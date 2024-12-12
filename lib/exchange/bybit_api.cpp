@@ -47,7 +47,12 @@ Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string
                                   const std::map<std::string, std::string>& params) {
     CURL* curl = curl_easy_init();
     std::string response;
-    std::string url = BASE_URL + endpoint;
+    
+    std::string url = BASE_URL;
+    if (!url.empty() && url.back() == '/') {
+        url.pop_back();
+    }
+    url += endpoint;
     std::string paramString;
     
     if (curl) {
@@ -115,10 +120,9 @@ Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string
             std::cout << "API錯誤: " << root["retMsg"].asString() << std::endl;
         }
         return root;
-    } else {
-        std::cerr << "解析響應失敗: " << response << std::endl;
-        return Json::Value();
     }
+    
+    return Json::Value();
 }
 
 BybitAPI& BybitAPI::getInstance() {
