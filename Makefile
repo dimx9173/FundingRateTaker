@@ -18,8 +18,10 @@ TARGET = $(TARGET_DIR)/funding_rate_fetcher
 
 # 源文件
 SOURCES = funding_rate_fetcher.cpp \
-          lib/exchange/bybit_api.cpp \
-          lib/config.cpp
+          src/exchange/bybit_api.cpp \
+          src/config.cpp \
+          src/trading/trading_module.cpp \
+          src/storage/sqlite_storage.cpp
 
 # 目標文件 (放在 obj 目錄)
 OBJECTS = $(addprefix $(OBJ_DIR)/, $(notdir $(SOURCES:.cpp=.o)))
@@ -38,10 +40,16 @@ $(TARGET): $(OBJECTS)
 $(OBJ_DIR)/%.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-$(OBJ_DIR)/%.o: lib/exchange/%.cpp
+$(OBJ_DIR)/%.o: src/exchange/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-$(OBJ_DIR)/%.o: lib/%.cpp
+$(OBJ_DIR)/%.o: src/%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+$(OBJ_DIR)/%.o: src/trading/%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+$(OBJ_DIR)/%.o: src/storage/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 # 清理規則
