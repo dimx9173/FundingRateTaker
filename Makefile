@@ -26,6 +26,15 @@ SOURCES = funding_rate_fetcher.cpp \
 # 目標文件 (放在 obj 目錄)
 OBJECTS = $(addprefix $(OBJ_DIR)/, $(notdir $(SOURCES:.cpp=.o)))
 
+# 測試相關設置
+TEST_DIR = tests
+TEST_TARGET = $(TARGET_DIR)/run_tests
+TEST_SOURCES = $(wildcard $(TEST_DIR)/*.cpp)
+TEST_OBJECTS = $(addprefix $(OBJ_DIR)/, $(notdir $(TEST_SOURCES:.cpp=.o)))
+
+# 添加 Google Test 庫
+TEST_LIBS = -lgtest -lgtest_main -lgmock -lgmock_main
+
 # 創建必要的目錄
 $(shell mkdir -p $(TARGET_DIR) $(OBJ_DIR))
 
@@ -52,6 +61,16 @@ $(OBJ_DIR)/%.o: src/trading/%.cpp
 $(OBJ_DIR)/%.o: src/storage/%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
+# 測試目標
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+$(TEST_TARGET): $(OBJECTS) $(TEST_OBJECTS)
+	$(CXX) $^ $(LDFLAGS) $(LIBS) $(TEST_LIBS) -o $@
+
+$(OBJ_DIR)/%.o: $(TEST_DIR)/%.cpp
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
 # 清理規則
 clean:
 	rm -rf $(TARGET_DIR)
@@ -59,4 +78,4 @@ clean:
 # 重新編譯
 rebuild: clean all
 
-.PHONY: all clean rebuild
+.PHONY: all clean rebuild test
