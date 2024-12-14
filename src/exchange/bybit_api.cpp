@@ -325,60 +325,95 @@ double BybitAPI::getSpotPrice(const std::string& symbol) {
 
 void BybitAPI::displayPositions() {
     Logger logger;
-    Json::Value positions = getPositions();
     
-    if (!positions.isObject() || positions["retCode"].asInt() != 0 || 
-        !positions["result"]["list"].isArray()) {
-        logger.error("獲取倉位信息失敗");
-        return;
-    }
+    // 獲取合約倉位
+    Json::Value futuresPositions = getPositions();
     
-    const Json::Value& list = positions["result"]["list"];
-    if (list.empty()) {
-        std::cout << "\n當前無持倉" << std::endl;
-        return;
-    }
+    // 獲取現貨餘額
+    std::map<std::string, std::string> params;
+    params["accountType"] = "UNIFIED";
+    Json::Value spotBalances = makeRequest("/v5/account/wallet-balance", "GET", params);
     
+    // 顯示邏輯保持不變
     std::cout << "\n=== 當前持倉狀態 ===" << std::endl;
     std::cout << std::left
               << std::setw(12) << "幣對"
+              << std::setw(10) << "類型"
               << std::setw(10) << "方向"
               << std::setw(15) << "數量"
               << std::setw(15) << "未實現盈虧"
               << std::setw(15) << "倉位價值"
               << std::endl;
-    std::cout << std::string(67, '-') << std::endl;
+    std::cout << std::string(77, '-') << std::endl;
     
     double totalValue = 0.0;
     double totalPnL = 0.0;
     
-    for (const auto& pos : list) {
-        try {
-            std::string symbol = pos["symbol"].asString();
-            std::string side = pos["side"].asString();
-            double size = std::stod(pos["size"].asString());
-            double unrealizedPnL = std::stod(pos["unrealisedPnl"].asString());
-            double positionValue = std::stod(pos["positionValue"].asString());
-            
-            if (size <= 0) continue;
-            
-            std::cout << std::left
-                      << std::setw(12) << symbol
-                      << std::setw(10) << side
-                      << std::setw(15) << std::fixed << std::setprecision(4) << size
-                      << std::setw(15) << std::fixed << std::setprecision(2) << unrealizedPnL
-                      << std::setw(15) << std::fixed << std::setprecision(2) << positionValue
-                      << std::endl;
-                      
-            totalValue += positionValue;
-            totalPnL += unrealizedPnL;
-        } catch (const std::exception& e) {
-            logger.error("解析倉位數據失敗: " + std::string(e.what()));
-            continue;
+    // 顯示合約倉位
+    if (futuresPositions.isObject() && futuresPositions["result"]["list"].isArray()) {
+        for (const auto& pos : futuresPositions["result"]["list"]) {
+            try {
+                double size = std::stod(pos["size"].asString());
+                if (size <= 0) continue;
+                
+                std::cout << std::left
+                          << std::setw(12) << pos["symbol"].asString()
+                          << std::setw(10) << "合約"
+                          << std::setw(10) << pos["side"].asString()
+                          << std::setw(15) << std::fixed << std::setprecision(4) << size
+                          << std::setw(15) << std::fixed << std::setprecision(2) 
+                          << std::stod(pos["unrealisedPnl"].asString())
+                          << std::setw(15) << std::fixed << std::setprecision(2) 
+                          << std::stod(pos["positionValue"].asString())
+                          << std::endl;
+                
+                totalValue += std::stod(pos["positionValue"].asString());
+                totalPnL += std::stod(pos["unrealisedPnl"].asString());
+            } catch (const std::exception& e) {
+                logger.error("解析合約倉位數據失敗: " + std::string(e.what()));
+                continue;
+            }
         }
     }
     
-    std::cout << std::string(67, '-') << std::endl;
+    // 修改現貨餘額的解析邏輯
+    if (spotBalances.isObject() && spotBalances["result"]["list"].isArray()) {
+        const auto& list = spotBalances["result"]["list"][0]["coin"];
+        if (list.isArray()) {
+            for (const auto& coin : list) {
+                try {
+                    std::string symbol = coin["coin"].asString();
+                    if (symbol == "USDT") continue;
+                    
+                    double size = std::stod(coin["walletBalance"].asString());
+                    if (size <= 0) continue;
+                    
+                    std::string pairSymbol = symbol + "USDT";
+                    double spotPrice = getSpotPrice(pairSymbol);
+                    double positionValue = size * spotPrice;
+                    
+                    if (positionValue > 0) {
+                        std::cout << std::left
+                                  << std::setw(12) << pairSymbol
+                                  << std::setw(10) << "現貨"
+                                  << std::setw(10) << "Buy"
+                                  << std::setw(15) << std::fixed << std::setprecision(4) << size
+                                  << std::setw(15) << std::fixed << std::setprecision(2) << 0.0
+                                  << std::setw(15) << std::fixed << std::setprecision(2) << positionValue
+                                  << std::endl;
+                        
+                        totalValue += positionValue;
+                    }
+                } catch (const std::exception& e) {
+                    logger.error("解析現貨餘額數據失敗: " + std::string(e.what()));
+                    continue;
+                }
+            }
+        }
+    }
+    
+    // 顯示匯總信息部分保持不變
+    std::cout << std::string(77, '-') << std::endl;
     std::cout << "總倉位價值: " << std::fixed << std::setprecision(2) << totalValue << " USDT" << std::endl;
     std::cout << "總未實現盈虧: " << std::fixed << std::setprecision(2) << totalPnL << " USDT" << std::endl;
     
@@ -409,5 +444,27 @@ std::vector<std::string> BybitAPI::getInstruments(const std::string& category) {
     }
     
     return instruments;
+}
+
+Json::Value BybitAPI::getSpotBalances() {
+    Logger logger;
+    logger.info("獲取現貨餘額");
+    
+    std::map<std::string, std::string> params;
+    params["accountType"] = "UNIFIED";
+    
+    try {
+        Json::Value response = makeRequest("/v5/account/wallet-balance", "GET", params);
+        
+        if (response["retCode"].asInt() != 0) {
+            logger.error("獲取現貨餘額失敗: " + response["retMsg"].asString());
+            return Json::Value(Json::objectValue);
+        }
+        
+        return response;
+    } catch (const std::exception& e) {
+        logger.error("獲取現貨餘額異常: " + std::string(e.what()));
+        return Json::Value(Json::objectValue);
+    }
 }
 

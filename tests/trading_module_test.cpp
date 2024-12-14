@@ -21,6 +21,26 @@ public:
     MOCK_METHOD3(createSpotOrder, bool(const std::string&, const std::string&, double));
     MOCK_METHOD1(closePosition, void(const std::string&));
     MOCK_METHOD1(getInstruments, std::vector<std::string>(const std::string&));
+
+    // 實現 displayPositions
+    void displayPositions() override {
+        // 測試用的空實現
+    }
+
+    // 實現 getSpotBalances
+    Json::Value getSpotBalances() override {
+        Json::Value result;
+        result["result"]["list"][0]["coin"] = Json::Value(Json::arrayValue);
+        
+        // 添加一些測試用的餘額數據
+        Json::Value usdtBalance;
+        usdtBalance["coin"] = "USDT";
+        usdtBalance["walletBalance"] = "1000.0";
+        usdtBalance["total"] = "1000.0";
+        result["result"]["list"][0]["coin"].append(usdtBalance);
+
+        return result;
+    }
 };
 
 class TradingModuleTest : public ::testing::Test {

@@ -29,6 +29,9 @@ public:
                                const std::string& side, 
                                double qty) = 0;
     virtual void closePosition(const std::string& symbol) = 0;
+
+    // 新方法
+    virtual Json::Value getSpotBalances() = 0;
 };
 
 #endif // EXCHANGE_INTERFACE_H 

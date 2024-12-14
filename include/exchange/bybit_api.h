@@ -40,6 +40,7 @@ public:
     void closePosition(const std::string& symbol) override;
     void displayPositions() override;
     std::vector<std::string> getInstruments(const std::string& category = "linear") override;
+    Json::Value getSpotBalances() override;
 };
 
 #endif // BYBIT_API_H

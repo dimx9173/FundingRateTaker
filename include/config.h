@@ -53,4 +53,6 @@ public:
     double getMaxSinglePositionRisk() const;
     bool getPositionScaling() const;
     double getScalingFactor() const;
+    double getMinPositionValue() const;
+    double getMaxPositionValue() const;
 }; 

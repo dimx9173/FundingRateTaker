@@ -161,3 +161,11 @@ Json::Value Config::getExchangeConfig(const std::string& exchange) const {
 int Config::getFundingHistoryDays() const {
     return config["trading"]["funding_rate_scoring"]["history_days"].asInt();
 } 
+// 在 Config 類的 public 部分添加：
+double Config::getMinPositionValue() const { 
+    return config["trading"]["min_position_value"].asDouble(); 
+}
+
+double Config::getMaxPositionValue() const { 
+    return config["trading"]["max_position_value"].asDouble(); 
+}

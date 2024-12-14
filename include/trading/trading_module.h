@@ -21,6 +21,12 @@ private:
     double calculatePositionSize(const std::string& symbol, double rate);
     bool checkTotalPositionLimit();
     bool isNearSettlement();
+    std::vector<std::string> getCurrentPositionSymbols();
+    bool shouldClosePosition(const std::string& symbol, 
+                           const std::vector<std::pair<std::string, double>>& topRates);
+    
+    double adjustPrecision(double quantity, const std::string& symbol);
+    double getMinOrderSize(const std::string& symbol);
 
 public:
     static TradingModule& getInstance(IExchange& exchange);
