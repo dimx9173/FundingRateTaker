@@ -49,6 +49,36 @@ std::vector<std::string> splitString(const std::string& str, const std::string& 
     return tokens;
 }
 
+bool isNearSettlement() {
+    auto now = std::chrono::system_clock::now();
+    auto utc_time = std::chrono::system_clock::to_time_t(now);
+    std::tm utc_tm = *std::gmtime(&utc_time);
+    
+    int current_minutes = utc_tm.tm_hour * 60 + utc_tm.tm_min;
+    auto settlement_times = Config::getInstance().getSettlementTimesUTC();
+    int pre_minutes = Config::getInstance().getPreSettlementMinutes();
+    
+    for (const auto& time_str : settlement_times) {
+        std::istringstream ss(time_str);
+        int hour, minute;
+        char delimiter;
+        ss >> hour >> delimiter >> minute;
+        
+        int settlement_minutes = hour * 60 + minute;
+        int diff = std::abs(current_minutes - settlement_minutes);
+        
+        // 考慮跨日情況
+        if (diff > 720) { // 12小時 = 720分鐘
+            diff = 1440 - diff; // 24小時 = 1440分鐘
+        }
+        
+        if (diff <= pre_minutes) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // 调度器
 void scheduleTask() {
     Logger logger;

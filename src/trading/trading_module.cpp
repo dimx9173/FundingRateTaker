@@ -60,11 +60,27 @@ bool TradingModule::checkTotalPositionLimit() {
 }
 
 std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() {
-    auto rates = exchange.getFundingRates();
+    if (isNearSettlement()) {
+        std::cout << "接近結算時間，重新計算資金費率..." << std::endl;
+    }
     
-    std::cout << "\n=== 當前資金費率排名 ===" << std::endl;
+    auto rates = exchange.getFundingRates();
+    auto periods = Config::getInstance().getFundingPeriods();
+    auto weights = Config::getInstance().getFundingWeights();
+    
+    std::cout << "\n=== 資金費率加權排名 ===" << std::endl;
+    std::cout << "計算週期(小時): ";
+    for (size_t i = 0; i < periods.size(); i++) {
+        std::cout << periods[i] << (i < periods.size() - 1 ? ", " : "");
+    }
+    std::cout << "\n權重係數: ";
+    for (size_t i = 0; i < weights.size(); i++) {
+        std::cout << weights[i] << (i < weights.size() - 1 ? ", " : "");
+    }
+    std::cout << std::endl;
+    
     for (const auto& [symbol, rate] : rates) {
-        std::cout << symbol << ": " << (rate * 100) << "%" << std::endl;
+        std::cout << symbol << ": " << (rate * 100) << "% (加權)" << std::endl;
     }
     
     return rates;
@@ -79,6 +95,7 @@ void TradingModule::closeTradeGroup(const std::string& group) {
 }
 
 void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string, double>>& topRates) {
+    exchange.displayPositions();
     if (!checkTotalPositionLimit()) {
         std::cout << "已達到總倉位限制" << std::endl;
         return;
@@ -123,4 +140,31 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
             std::cout << "對沖交易失敗，已平倉: " << symbol << std::endl;
         }
     }
+}
+
+bool TradingModule::isNearSettlement() {
+    auto now = std::chrono::system_clock::now();
+    auto utc_time = std::chrono::system_clock::to_time_t(now);
+    std::tm utc_tm = *std::gmtime(&utc_time);
+    int current_minutes = utc_tm.tm_hour * 60 + utc_tm.tm_min;
+    auto settlement_times = Config::getInstance().getSettlementTimesUTC();
+    int pre_minutes = Config::getInstance().getPreSettlementMinutes();
+    for (const auto& time_str : settlement_times) {
+        std::istringstream ss(time_str);
+        int hour, minute;
+        char delimiter;
+        ss >> hour >> delimiter >> minute;
+        int settlement_minutes = hour * 60 + minute;
+        int diff = std::abs(current_minutes - settlement_minutes);
+        
+        // 考慮跨日情況
+        if (diff > 720) { // 12小時 = 720分鐘
+            diff = 1440 - diff; // 24小時 = 1440分鐘
+        }
+        
+        if (diff <= pre_minutes) {
+            return true;
+        }
+    }
+    return false;
 }

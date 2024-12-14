@@ -20,12 +20,17 @@ private:
     TradingModule(IExchange& exchange);
     double calculatePositionSize(const std::string& symbol, double rate);
     bool checkTotalPositionLimit();
+    bool isNearSettlement();
 
 public:
     static TradingModule& getInstance(IExchange& exchange);
     std::vector<std::pair<std::string, double>> getTopFundingRates();
     void closeTradeGroup(const std::string& group);
     void executeHedgeStrategy(const std::vector<std::pair<std::string, double>>& topRates);
+    static void resetInstance() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        instance.reset();
+    }
 };
 
 #endif // TRADING_MODULE_H

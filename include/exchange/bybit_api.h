@@ -38,7 +38,8 @@ public:
                         const std::string& side, 
                         double qty) override;
     void closePosition(const std::string& symbol) override;
-    void displayPositions();
+    void displayPositions() override;
+    std::vector<std::string> getInstruments(const std::string& category = "linear") override;
 };
 
 #endif // BYBIT_API_H

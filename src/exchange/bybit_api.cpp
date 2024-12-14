@@ -7,6 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include "logger.h"
 
 std::mutex BybitAPI::mutex_;
 std::unique_ptr<BybitAPI> BybitAPI::instance;
@@ -136,19 +137,74 @@ BybitAPI& BybitAPI::getInstance() {
 std::vector<std::pair<std::string, double>> BybitAPI::getFundingRates() {
     std::vector<std::pair<std::string, double>> rates;
     auto pairs = Config::getInstance().getTradingPairs();
+    auto periods = Config::getInstance().getFundingPeriods();
+    auto weights = Config::getInstance().getFundingWeights();
+    
+    Logger logger;
+    logger.info("開始獲取資金費率，交易對數量: " + std::to_string(pairs.size()));
+    
+    if (periods.empty() || weights.empty() || periods.size() != weights.size()) {
+        logger.error("錯誤: 資金費率計算週期或權重配置不正確");
+        return rates;
+    }
+    
+    int maxPeriod = *std::max_element(periods.begin(), periods.end());
     
     for (const auto& symbol : pairs) {
+        logger.info("處理交易對: " + symbol);
+        
         std::map<std::string, std::string> params;
         params["symbol"] = symbol;
         params["category"] = "linear";
+        params["limit"] = std::to_string(maxPeriod);
         
-        Json::Value response = makeRequest("/v5/market/funding/history", "GET", params);
-        
-        if (response.isObject() && response["retCode"].asInt() == 0 && 
-            response["result"]["list"].isArray() && !response["result"]["list"].empty()) {
+        try {
+            Json::Value response = makeRequest("/v5/market/funding/history", "GET", params);
             
-            double rate = std::stod(response["result"]["list"][0]["fundingRate"].asString());
-            rates.emplace_back(symbol, rate);
+            if (!response.isObject() || response["retCode"].asInt() != 0 || 
+                !response["result"]["list"].isArray() || response["result"]["list"].empty()) {
+                logger.error("獲取資金費率失敗: " + symbol);
+                continue;
+            }
+            
+            const Json::Value& list = response["result"]["list"];
+            double weightedScore = 0.0;
+            double totalWeight = 0.0;
+            
+            // 對每個週期計算加權平均
+            for (size_t i = 0; i < periods.size(); i++) {
+                int periodLimit = periods[i];
+                double periodSum = 0.0;
+                int validCount = 0;
+                
+                // 計算當前週期的平均值
+                for (int j = 0; j < list.size() && j < periodLimit; j++) {
+                    try {
+                        double rate = std::stod(list[j]["fundingRate"].asString());
+                        periodSum += rate;
+                        validCount++;
+                    } catch (const std::exception& e) {
+                        logger.error("解析資金費率失敗: " + std::string(e.what()));
+                        continue;
+                    }
+                }
+                
+                if (validCount > 0) {
+                    double periodAvg = periodSum / validCount;
+                    weightedScore += periodAvg * weights[i];
+                    totalWeight += weights[i];
+                }
+            }
+            
+            if (totalWeight > 0) {
+                double finalScore = weightedScore / totalWeight;
+                rates.emplace_back(symbol, finalScore);
+                logger.info(symbol + " 最終加權分數: " + std::to_string(finalScore));
+            }
+            
+        } catch (const std::exception& e) {
+            logger.error("處理資金費率時發生異常: " + symbol + " - " + e.what());
+            continue;
         }
     }
     
@@ -207,13 +263,39 @@ void BybitAPI::closePosition(const std::string& symbol) {
 }
 
 Json::Value BybitAPI::getPositions(const std::string& symbol) {
+    Logger logger;
     std::map<std::string, std::string> params;
-    if (!symbol.empty()) {
-        params["symbol"] = symbol;
-    }
     params["category"] = "linear";
+    params["settleCoin"] = "USDT";
     
-    return makeRequest("/v5/position/list", "GET", params);
+    if (!symbol.empty()) {
+        logger.info("獲取指定幣對倉位: " + symbol);
+        params["symbol"] = symbol;
+    } else {
+        logger.info("獲取所有倉位");
+    }
+    
+    std::string paramString = "category=" + params["category"] + 
+                            "&settleCoin=" + params["settleCoin"];
+    if (!symbol.empty()) {
+        paramString += "&symbol=" + symbol;
+    }
+    logger.info("請求參數: " + paramString);
+    
+    Json::Value response = makeRequest("/v5/position/list", "GET", params);
+    
+    if (!response.isObject()) {
+        logger.error("API響應格式錯誤");
+        return Json::Value();
+    }
+    
+    if (response["retCode"].asInt() != 0) {
+        logger.error("API錯誤: " + response["retMsg"].asString());
+        logger.error("完整響應: " + Json::FastWriter().write(response));
+        return Json::Value();
+    }
+    
+    return response;
 }
 
 double BybitAPI::getTotalEquity() {
@@ -242,18 +324,90 @@ double BybitAPI::getSpotPrice(const std::string& symbol) {
 }
 
 void BybitAPI::displayPositions() {
+    Logger logger;
     Json::Value positions = getPositions();
-    if (positions.isObject() && positions["retCode"].asInt() == 0 && 
-        positions["result"]["list"].isArray()) {
-        
-        std::cout << "\n當前持倉:" << std::endl;
-        for (const auto& pos : positions["result"]["list"]) {
-            std::cout << "幣對: " << pos["symbol"].asString() 
-                      << ", 方向: " << pos["side"].asString()
-                      << ", 數量: " << pos["size"].asString()
-                      << ", 槓桿: " << pos["leverage"].asString()
+    
+    if (!positions.isObject() || positions["retCode"].asInt() != 0 || 
+        !positions["result"]["list"].isArray()) {
+        logger.error("獲取倉位信息失敗");
+        return;
+    }
+    
+    const Json::Value& list = positions["result"]["list"];
+    if (list.empty()) {
+        std::cout << "\n當前無持倉" << std::endl;
+        return;
+    }
+    
+    std::cout << "\n=== 當前持倉狀態 ===" << std::endl;
+    std::cout << std::left
+              << std::setw(12) << "幣對"
+              << std::setw(10) << "方向"
+              << std::setw(15) << "數量"
+              << std::setw(15) << "未實現盈虧"
+              << std::setw(15) << "倉位價值"
+              << std::endl;
+    std::cout << std::string(67, '-') << std::endl;
+    
+    double totalValue = 0.0;
+    double totalPnL = 0.0;
+    
+    for (const auto& pos : list) {
+        try {
+            std::string symbol = pos["symbol"].asString();
+            std::string side = pos["side"].asString();
+            double size = std::stod(pos["size"].asString());
+            double unrealizedPnL = std::stod(pos["unrealisedPnl"].asString());
+            double positionValue = std::stod(pos["positionValue"].asString());
+            
+            if (size <= 0) continue;
+            
+            std::cout << std::left
+                      << std::setw(12) << symbol
+                      << std::setw(10) << side
+                      << std::setw(15) << std::fixed << std::setprecision(4) << size
+                      << std::setw(15) << std::fixed << std::setprecision(2) << unrealizedPnL
+                      << std::setw(15) << std::fixed << std::setprecision(2) << positionValue
                       << std::endl;
+                      
+            totalValue += positionValue;
+            totalPnL += unrealizedPnL;
+        } catch (const std::exception& e) {
+            logger.error("解析倉位數據失敗: " + std::string(e.what()));
+            continue;
         }
     }
+    
+    std::cout << std::string(67, '-') << std::endl;
+    std::cout << "總倉位價值: " << std::fixed << std::setprecision(2) << totalValue << " USDT" << std::endl;
+    std::cout << "總未實現盈虧: " << std::fixed << std::setprecision(2) << totalPnL << " USDT" << std::endl;
+    
+    double equity = getTotalEquity();
+    if (equity > 0) {
+        std::cout << "賬戶總權益: " << std::fixed << std::setprecision(2) << equity << " USDT" << std::endl;
+        double utilizationRate = (totalValue / equity) * 100;
+        std::cout << "倉位使用率: " << std::fixed << std::setprecision(2) << utilizationRate << "%" << std::endl;
+    }
+}
+
+std::vector<std::string> BybitAPI::getInstruments(const std::string& category) {
+    std::vector<std::string> instruments;
+    std::map<std::string, std::string> params;
+    params["category"] = category;
+    
+    Json::Value response = makeRequest("/v5/market/instruments-info", "GET", params);
+    
+    if (response.isObject() && response["retCode"].asInt() == 0 && 
+        response["result"]["list"].isArray()) {
+        
+        const Json::Value& list = response["result"]["list"];
+        for (const auto& instrument : list) {
+            if (instrument["status"].asString() == "Trading") {
+                instruments.push_back(instrument["symbol"].asString());
+            }
+        }
+    }
+    
+    return instruments;
 }
 

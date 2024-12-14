@@ -15,6 +15,8 @@ public:
     virtual double getSpotPrice(const std::string& symbol) = 0;
     virtual double getTotalEquity() = 0;
     virtual Json::Value getPositions(const std::string& symbol = "") = 0;
+    virtual std::vector<std::string> getInstruments(const std::string& category = "linear") = 0;
+    virtual void displayPositions() = 0;    
 
     // 交易操作
     virtual bool setLeverage(const std::string& symbol, int leverage) = 0;

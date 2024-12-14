@@ -32,6 +32,13 @@
             "max_single_position_risk": 0.1,
             "position_scaling": true,
             "scaling_factor": 1.5
+        },
+        "funding_history_days": 7,
+        "funding_rate_scoring": {
+            "periods": [8, 24, 72],
+            "weights": [3.0, 2.0, 1.0],
+            "settlement_times_utc": ["00:00", "08:00", "16:00"],
+            "pre_settlement_minutes": 30
         }
     },
     "top_pairs_count": 5

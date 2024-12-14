@@ -1,6 +1,6 @@
 # 編譯器設置
 CXX = clang++
-CXXFLAGS = -std=gnu++20 -Wall -g
+CXXFLAGS = -std=gnu++20 -Wall -g -DDEBUG
 
 # 包含目錄
 INCLUDES = -I/opt/homebrew/include -I/usr/local/include -Iinclude
@@ -77,5 +77,9 @@ clean:
 
 # 重新編譯
 rebuild: clean all
+
+# 添加測試目標的調試規則
+test-debug: $(TEST_TARGET)
+	lldb $(TEST_TARGET)
 
 .PHONY: all clean rebuild test

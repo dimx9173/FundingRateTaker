@@ -109,4 +109,55 @@ bool Config::getPositionScaling() const {
 
 double Config::getScalingFactor() const {
     return config["trading"]["risk_management"]["scaling_factor"].asDouble();
+}
+
+std::vector<int> Config::getFundingPeriods() const {
+    std::vector<int> periods;
+    const Json::Value& periodsArray = config["trading"]["funding_rate_scoring"]["periods"];
+    for (const auto& period : periodsArray) {
+        periods.push_back(period.asInt());
+    }
+    return periods;
+}
+
+std::vector<double> Config::getFundingWeights() const {
+    std::vector<double> weights;
+    const Json::Value& weightsArray = config["trading"]["funding_rate_scoring"]["weights"];
+    for (const auto& weight : weightsArray) {
+        weights.push_back(weight.asDouble());
+    }
+    return weights;
+}
+
+std::string Config::getPreferredExchange() const {
+    return config["preferred_exchange"].asString();
+}
+
+bool Config::isExchangeEnabled(const std::string& exchange) const {
+    std::string lowerExchange = exchange;
+    std::transform(lowerExchange.begin(), lowerExchange.end(), lowerExchange.begin(), ::tolower);
+    return config["exchanges"][lowerExchange]["enabled"].asBool();
+}
+
+std::vector<std::string> Config::getSettlementTimesUTC() const {
+    std::vector<std::string> times;
+    const Json::Value& timesArray = config["trading"]["funding_rate_scoring"]["settlement_times_utc"];
+    for (const auto& time : timesArray) {
+        times.push_back(time.asString());
+    }
+    return times;
+}
+
+int Config::getPreSettlementMinutes() const {
+    return config["trading"]["funding_rate_scoring"]["pre_settlement_minutes"].asInt();
+}
+
+Json::Value Config::getExchangeConfig(const std::string& exchange) const {
+    std::string lowerExchange = exchange;
+    std::transform(lowerExchange.begin(), lowerExchange.end(), lowerExchange.begin(), ::tolower);
+    return config["exchanges"][lowerExchange];
+}
+
+int Config::getFundingHistoryDays() const {
+    return config["trading"]["funding_rate_scoring"]["history_days"].asInt();
 } 
