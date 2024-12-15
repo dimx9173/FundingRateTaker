@@ -21,20 +21,7 @@
 #include "exchange/exchange_factory.h"
 #include "trading/trading_module.h"
 #include "storage/sqlite_storage.h"
-
-// 建議添加專門的日誌類
-class Logger {
-public:
-    void info(const std::string& message) {
-        std::cout << "[INFO] " << message << std::endl;
-    }
-    void error(const std::string& message) {
-        std::cerr << "[ERROR] " << message << std::endl;
-    }
-    void warning(const std::string& message) {
-        std::cerr << "[WARNING] " << message << std::endl;
-    }
-};
+#include "logger.h"
 
 std::vector<std::string> splitString(const std::string& str, const std::string& delimiter) {
     std::vector<std::string> tokens;

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vector>
 #include <utility>
+#include "../logger.h"
 
 std::vector<std::string> splitString(const std::string& str, const std::string& delimiter);
 
@@ -16,6 +17,7 @@ private:
     static std::unique_ptr<TradingModule> instance;
     IExchange& exchange;
     SQLiteStorage& storage;
+    Logger logger;
 
     TradingModule(IExchange& exchange);
     double calculatePositionSize(const std::string& symbol, double rate);
@@ -27,6 +29,11 @@ private:
     
     double adjustPrecision(double quantity, const std::string& symbol);
     double getMinOrderSize(const std::string& symbol);
+    double getMinOrderValue(const std::string& symbol);
+    double calculateTotalInvestment(
+        const std::map<std::string, std::pair<double, double>>& positions, 
+        IExchange& exchange);
+    double calculateAdjustedPosition(double basePosition, double rate);
 
 public:
     static TradingModule& getInstance(IExchange& exchange);

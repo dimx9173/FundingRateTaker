@@ -103,22 +103,18 @@ void TradingModule::closeTradeGroup(const std::string& group) {
 }
 
 void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string, double>>& topRates) {
+    logger.info("開始執行對沖策略");
+    logger.info("當前排名交易對數量: " + std::to_string(topRates.size()));
+    
     auto positions = exchange.getPositions();
     auto spotBalances = exchange.getSpotBalances();
     
+    logger.info("獲取當前倉位信息完成");
+    
     // 檢查並調整合約和現貨倉位
-    std::map<std::string, double> totalPositions;  // 記錄每個幣對的總倉位價值
+    std::map<std::string, std::pair<double, double>> positionSizes; // <symbol, <spot_size, contract_size>>
     
-    // 計算合約倉位價值
-    if (positions["result"]["list"].isArray()) {
-        for (const auto& pos : positions["result"]["list"]) {
-            std::string symbol = pos["symbol"].asString();
-            double positionValue = std::stod(pos["positionValue"].asString());
-            totalPositions[symbol] = positionValue;
-        }
-    }
-    
-    // 計算現貨倉位價值並合併
+    // 計算現貨數量
     if (spotBalances["result"]["list"].isArray()) {
         const auto& list = spotBalances["result"]["list"][0]["coin"];
         if (list.isArray()) {
@@ -126,11 +122,18 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
                 std::string symbol = coin["coin"].asString() + "USDT";
                 double size = std::stod(coin["walletBalance"].asString());
                 if (size > 0) {
-                    double spotPrice = exchange.getSpotPrice(symbol);
-                    double spotValue = size * spotPrice;
-                    totalPositions[symbol] += spotValue;
+                    positionSizes[symbol].first = size;
                 }
             }
+        }
+    }
+    
+    // 計算合約數量
+    if (positions["result"]["list"].isArray()) {
+        for (const auto& pos : positions["result"]["list"]) {
+            std::string symbol = pos["symbol"].asString();
+            double size = std::stod(pos["size"].asString());
+            positionSizes[symbol].second = size;
         }
     }
     
@@ -140,7 +143,7 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
     // 檢查現有倉位是否需要平倉
     for (const auto& symbol : currentSymbols) {
         if (shouldClosePosition(symbol, topRates)) {
-            std::cout << "\n關閉不在排行中的倉位: " << symbol << std::endl;
+            logger.info("準備關閉倉位: " + symbol);
             
             // 獲取現貨和合約倉位數量
             double spotSize = 0.0;
@@ -154,7 +157,16 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
                     for (const auto& coin : list) {
                         std::string coinSymbol = coin["coin"].asString() + "USDT";
                         if (coinSymbol == symbol) {
-                            spotSize = std::stod(coin["walletBalance"].asString());
+                            double balance = std::stod(coin["walletBalance"].asString());
+                            // 檢查是否大於最小訂單數量
+                            if (balance >= getMinOrderSize(symbol)) {
+                                spotSize = balance;
+                            } else {
+                                spotSize = 0.0;  // 小於最小訂單數量視為無倉位
+                                std::cout << "現貨數量小於最小訂單數量，視為無倉位: " << symbol 
+                                        << " 數量: " << balance 
+                                        << " 最小數量: " << getMinOrderSize(symbol) << std::endl;
+                            }
                             break;
                         }
                     }
@@ -185,8 +197,9 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
                 
                 bool success = exchange.createSpotOrder(symbol, "Sell", spotSize);
                 if (!success) {
-                    std::cout << "關閉現貨倉位失敗: " << symbol << std::endl;
+                    std::cout << "關閉現貨倉位失��: " << symbol << std::endl;
                 }
+                logger.info(symbol + " 現貨關閉數量: " + std::to_string(spotSize));
             }
 
             if (contractSize > 0) {
@@ -197,6 +210,7 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
                     if (!success) {
                         std::cout << "關閉合約倉位失敗: " << symbol << std::endl;
                     }
+                    logger.info(symbol + " 合約關閉數量: " + std::to_string(contractSize));
                 }
             }
         }
@@ -204,6 +218,8 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
     
     // 處理新的排行倉位
     for (const auto& [symbol, rate] : topRates) {
+        logger.info("檢查新倉位: " + symbol + " 費率: " + std::to_string(rate));
+        
         // 檢查是否已經有該幣對的倉位
         bool hasPosition = std::find(currentSymbols.begin(), 
                                    currentSymbols.end(), 
@@ -256,7 +272,7 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
         // 先執行現貨買入
         bool spotOrderSuccess = exchange.createSpotOrder(symbol, "Buy", spotQty);
         if (!spotOrderSuccess) {
-            std::cout << "現貨買入失敗，跳過交易: " << symbol << std::endl;
+            std::cout << "現貨入失敗，跳過交易: " << symbol << std::endl;
             continue;
         }
 
@@ -280,209 +296,126 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
         std::cout << "對衝交易成功: " << symbol << std::endl;
     }
 
-    std::map<std::string, std::pair<double, double>> positionValues; // <symbol, <spot_value, contract_value>>
-
-    // 計算現貨價值
-    if (spotBalances["result"]["list"].isArray()) {
-        const auto& list = spotBalances["result"]["list"][0]["coin"];
-        if (list.isArray()) {
-            for (const auto& coin : list) {
-                std::string symbol = coin["coin"].asString() + "USDT";
-                double size = std::stod(coin["walletBalance"].asString());
-                if (size > 0) {
-                    double spotPrice = exchange.getSpotPrice(symbol);
-                    double value = size * spotPrice;  // 移除槓桿效應
-                    positionValues[symbol].first = value;
+    // 檢查倉位平衡
+    for (const auto& [symbol, rate] : topRates) {
+        // 檢查是否有該幣對的倉位
+        if (positionSizes.find(symbol) == positionSizes.end()) {
+            // 計算當前總投資額
+            double totalInvestment = 0.0;
+            for (const auto& [sym, sizes] : positionSizes) {
+                double spotPrice = exchange.getSpotPrice(sym);
+                if (spotPrice > 0) {
+                    totalInvestment += sizes.first * spotPrice;  // 現貨價值
                 }
             }
-        }
-    }
-
-    // 計算合約價值
-    if (positions["result"]["list"].isArray()) {
-        for (const auto& pos : positions["result"]["list"]) {
-            std::string symbol = pos["symbol"].asString();
-            double value = std::stod(pos["positionValue"].asString());
-            std::string side = pos["side"].asString();
             
-            // 記錄合約價值方向
-            positionValues[symbol].second = value;
-            
-            // 檢查合約方向是否正確（應該是空倉）
-            if (side == "Buy") {
-                std::cout << "\n=== 檢測到錯誤的合約方向 " << symbol << " ===" << std::endl;
-                std::cout << "當前方向: 多倉" << std::endl;
-                std::cout << "需要方向: 空倉" << std::endl;
-                std::cout << "倉位大小: " << std::stod(pos["size"].asString()) << std::endl;
-                
-                // 平掉錯誤方向的倉位
-                double size = std::stod(pos["size"].asString());
-                size = adjustPrecision(size, symbol);
-                
-                if (size >= getMinOrderSize(symbol)) {
-                    std::cout << "執行方向調整: 平掉多倉並開空倉 " << size << " " << symbol << std::endl;
-                    
-                    // 先平掉多倉
-                    auto closeResult = exchange.createOrder(symbol, "Sell", size, "linear", "MARKET");
-                    if (closeResult["retCode"].asInt() == 0) {
-                        std::cout << "平倉成功" << std::endl;
-                        
-                        // 等待訂單執行
-                        std::this_thread::sleep_for(std::chrono::seconds(1));
-                        
-                        // 開立空倉
-                        auto openResult = exchange.createOrder(symbol, "Sell", size, "linear", "MARKET");
-                        if (openResult["retCode"].asInt() == 0) {
-                            std::cout << "開空倉成功" << std::endl;
-                        } else {
-                            std::cout << "開空倉失敗: " << openResult["retMsg"].asString() << std::endl;
-                        }
-                    } else {
-                        std::cout << "平倉失敗: " << closeResult["retMsg"].asString() << std::endl;
-                    }
-                }
-                std::cout << "===========================" << std::endl;
-            }
-        }
-    }
-
-    // 在檢查倉位平衡前添加現貨倉位調整邏輯
-    for (const auto& [symbol, values] : positionValues) {
-        // 檢查該幣對是否在新的排行中
-        bool inTopRates = false;
-        for (const auto& [topSymbol, rate] : topRates) {
-            if (symbol == topSymbol) {
-                inTopRates = true;
-                break;
-            }
-        }
-        
-        if (!inTopRates) continue;
-
-        double spotValue = values.first;
-        double contractValue = values.second;
-        double minOrderSize = getMinOrderSize(symbol);
-        
-        std::cout << "\n=== 檢查現貨倉位價值 " << symbol << " ===" << std::endl;
-        std::cout << "現貨價值: " << std::fixed << std::setprecision(2) << spotValue << " USDT" << std::endl;
-        std::cout << "合約價值: " << std::fixed << std::setprecision(2) << contractValue << " USDT" << std::endl;
-        
-        double currentPrice = exchange.getSpotPrice(symbol);
-        if (currentPrice <= 0) {
-            std::cout << "無法獲取" << symbol << "價格，跳過調整" << std::endl;
-            continue;
-        }
-        
-        double minPositionValue = Config::getInstance().getMinPositionValue();
-        double maxPositionValue = Config::getInstance().getMaxPositionValue();
-        
-        // 計算調整後的目標現貨價值
-        double targetSpotValue = 0;
-        if (spotValue > 0 && spotValue < minPositionValue) {
-            // 確保調整後的現貨價值能夠支持後續合約調整
-            double minAdjustValue = minOrderSize * currentPrice;
-            targetSpotValue = std::max(minPositionValue, contractValue + minAdjustValue);
-            
-            double additionalSpotQty = (targetSpotValue - spotValue) / currentPrice;
-            additionalSpotQty = adjustPrecision(additionalSpotQty, symbol);
-            
-            if (additionalSpotQty >= minOrderSize) {
-                std::cout << "現貨倉位價值過小，增加現貨: " << additionalSpotQty << " " << symbol << std::endl;
-                std::cout << "目標現貨價值: " << targetSpotValue << " USDT" << std::endl;
-                bool success = exchange.createSpotOrder(symbol, "Buy", additionalSpotQty);
-                if (success) {
-                    spotValue = targetSpotValue;
-                    positionValues[symbol].first = spotValue;
-                }
-            }
-        }
-        else if (spotValue > maxPositionValue) {
-            // 確保調整後的現貨價值不會小於合約價值
-            targetSpotValue = std::max(maxPositionValue, contractValue);
-            
-            double reduceSpotQty = (spotValue - targetSpotValue) / currentPrice;
-            reduceSpotQty = adjustPrecision(reduceSpotQty, symbol);
-            
-            if (reduceSpotQty >= minOrderSize) {
-                std::cout << "現貨倉位價值過大，減少現貨: " << reduceSpotQty << " " << symbol << std::endl;
-                std::cout << "目標現貨價值: " << targetSpotValue << " USDT" << std::endl;
-                bool success = exchange.createSpotOrder(symbol, "Sell", reduceSpotQty);
-                if (success) {
-                    spotValue = targetSpotValue;
-                    positionValues[symbol].first = spotValue;
-                }
-            }
-        }
-    }
-
-    // 然後再進行原有的倉位平衡邏輯
-    for (const auto& [symbol, values] : positionValues) {
-        double spotValue = values.first;
-        double contractValue = values.second;
-        double valueDiff = std::abs(spotValue - contractValue);
-        
-        std::cout << "\n=== 檢查倉位平衡 " << symbol << " ===" << std::endl;
-        std::cout << "現貨價值: " << std::fixed << std::setprecision(2) << spotValue << " USDT" << std::endl;
-        std::cout << "合約價值: " << std::fixed << std::setprecision(2) << contractValue << " USDT" << std::endl;
-        std::cout << "價值差異: " << std::fixed << std::setprecision(2) << valueDiff << " USDT" << std::endl;
-        
-        if (valueDiff > 1.0) {
+            // 獲取當前價格
             double currentPrice = exchange.getSpotPrice(symbol);
             if (currentPrice <= 0) {
-                std::cout << "無法獲取" << symbol << "當前價格，跳過調整" << std::endl;
+                std::cout << "無法獲取" << symbol << "價格，跳過" << std::endl;
                 continue;
             }
             
-            std::cout << "當前價格: " << std::fixed << std::setprecision(4) << currentPrice << " USDT" << std::endl;
+            // 檢查是否超過總投資限制
+            double maxTotalInvestment = Config::getInstance().getTotalInvestment();
+            if (totalInvestment >= maxTotalInvestment) {
+                std::cout << "已達到總投資限制，跳過新建倉位: " << symbol << std::endl;
+                continue;
+            }
             
-            // 計算要調整的數量
-            double adjustSize = valueDiff / currentPrice;
-            double rawAdjustSize = adjustSize;
-            adjustSize = adjustPrecision(adjustSize, symbol);
+            // 使用配置中的最小和最大倉位價值
+            double minPositionValue = Config::getInstance().getMinPositionValue();
+            double maxPositionValue = Config::getInstance().getMaxPositionValue();
             
-            // 檢查調整後的倉位價值是否在允許範圍內
-            double adjustValue = adjustSize * currentPrice;
+            // 基礎倉位計算
+            double basePosition = minPositionValue;
+            
+            // 根據資金費率調整倉位大小
+            double adjustedPosition = basePosition;
+            if (Config::getInstance().getPositionScaling()) {
+                double scalingFactor = Config::getInstance().getScalingFactor();
+                adjustedPosition = basePosition * (1 + std::abs(rate) * scalingFactor);
+                // 限制單個交易對的最大倉位價值
+                adjustedPosition = std::min(adjustedPosition, maxPositionValue);
+            }
+            
+            // 確保不超過剩餘可投資額度
+            double remainingInvestment = maxTotalInvestment - totalInvestment;
+            adjustedPosition = std::min(adjustedPosition, remainingInvestment);
+            
+            // 計算初始數量
+            double initialSize = adjustedPosition / currentPrice;
+            initialSize = adjustPrecision(initialSize, symbol);
+            
+            // 確保數量大於最小訂單量
+            double minSize = getMinOrderSize(symbol);
+            if (initialSize < minSize) {
+                std::cout << "計算後的倉位數量小於最小訂單量，跳過: " << symbol << std::endl;
+                continue;
+            }
+            
+            std::cout << "\n=== 建立新對衝倉位 " << symbol << " ===" << std::endl;
+            std::cout << "當前總投資額: " << totalInvestment << " USDT" << std::endl;
+            std::cout << "剩餘可投資額: " << remainingInvestment << " USDT" << std::endl;
+            std::cout << "目標倉位價值: " << adjustedPosition << " USDT" << std::endl;
+            std::cout << "初始數量: " << initialSize << std::endl;
+            
+            // 先建立現貨多倉
+            bool spotSuccess = exchange.createSpotOrder(symbol, "Buy", initialSize);
+            if (!spotSuccess) {
+                std::cout << "建立現貨倉位失敗，跳過" << std::endl;
+                continue;
+            }
+            
+            // 等待現貨訂單完成
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            
+            // 再建立合約空倉
+            auto contractResult = exchange.createOrder(symbol, "Sell", initialSize, "linear", "MARKET");
+            if (contractResult["retCode"].asInt() != 0) {
+                std::cout << "建立合約倉位失敗: " << contractResult["retMsg"].asString() << std::endl;
+                continue;
+            }
+            
+            std::cout << "成功建立對衝倉位" << std::endl;
+            continue;
+        }
 
-            std::cout << "調整數量(原始): " << std::fixed << std::setprecision(8) << rawAdjustSize << std::endl;
-            std::cout << "調整數量(精度調整後): " << std::fixed << std::setprecision(8) << adjustSize << std::endl;
-            std::cout << "調整價值: " << std::fixed << std::setprecision(2) << adjustValue << " USDT" << std::endl;
-            std::cout << "最小訂單數量: " << std::fixed << std::setprecision(8) << getMinOrderSize(symbol) << std::endl;
-            
-            if (adjustSize >= getMinOrderSize(symbol)) {
-                if (spotValue > contractValue) {
-                    // 只增加合約空倉
-                    std::cout << "執行調整: 增加合約空倉 " << adjustSize << " " << symbol << std::endl;
-                    auto contractResult = exchange.createOrder(symbol, "Sell", adjustSize, "linear", "MARKET");
-                    if (contractResult["retCode"].asInt() == 0) {
-                        std::cout << "合約賣出成功" << std::endl;
-                    } else {
-                        std::cout << "合約賣出失敗: " << contractResult["retMsg"].asString() << std::endl;
-                    }
+        double spotSize = positionSizes[symbol].first;
+        double contractSize = positionSizes[symbol].second;
+        double sizeDiff = std::abs(spotSize - contractSize);
+        
+        std::cout << "\n=== 檢查倉位平衡 " << symbol << " ===" << std::endl;
+        std::cout << "現貨數量: " << std::fixed << std::setprecision(8) << spotSize << std::endl;
+        std::cout << "合約數量: " << std::fixed << std::setprecision(8) << contractSize << std::endl;
+        std::cout << "數量差異: " << std::fixed << std::setprecision(8) << sizeDiff << std::endl;
+        
+        // 調整數量精度
+        sizeDiff = adjustPrecision(sizeDiff, symbol);
+        
+        if (sizeDiff >= getMinOrderSize(symbol)) {
+            if (spotSize > contractSize) {
+                // 增加合約空倉
+                std::cout << "執行調整: 增加合約空倉 " << sizeDiff << " " << symbol << std::endl;
+                auto contractResult = exchange.createOrder(symbol, "Sell", sizeDiff, "linear", "MARKET");
+                if (contractResult["retCode"].asInt() == 0) {
+                    std::cout << "合約賣出成功" << std::endl;
                 } else {
-                    // 只減少合約空倉
-                    std::cout << "執行調整: 減少合約空倉 " << adjustSize << " " << symbol << std::endl;
-                    auto contractResult = exchange.createOrder(symbol, "Buy", adjustSize, "linear", "MARKET");
-                    if (contractResult["retCode"].asInt() == 0) {
-                        std::cout << "合約買入成功" << std::endl;
-                    } else {
-                        std::cout << "合約買入失敗: " << contractResult["retMsg"].asString() << std::endl;
-                    }
+                    std::cout << "合約賣出失敗: " << contractResult["retMsg"].asString() << std::endl;
                 }
-                
-                std::cout << "等待單執行完成..." << std::endl;
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                
-                // 重新檢查倉位
-                auto newPositions = exchange.getPositions();
-                auto newSpotBalances = exchange.getSpotBalances();
-                std::cout << "倉位調整完成，請檢查新的倉位狀態" << std::endl;
             } else {
-                std::cout << "調整數量小於最小訂單數量，跳過調整" << std::endl;
+                // 減少合約空倉
+                std::cout << "執行調整: 減少合約空倉 " << sizeDiff << " " << symbol << std::endl;
+                auto contractResult = exchange.createOrder(symbol, "Buy", sizeDiff, "linear", "MARKET");
+                if (contractResult["retCode"].asInt() == 0) {
+                    std::cout << "合約買入成功" << std::endl;
+                } else {
+                    std::cout << "合約買入失敗: " << contractResult["retMsg"].asString() << std::endl;
+                }
             }
         } else {
-            std::cout << "倉位平衡，無需調整" << std::endl;
+            std::cout << "數量差異小於最小訂單數量，無需調整" << std::endl;
         }
-        std::cout << "===========================" << std::endl;
     }
 }
 
@@ -601,7 +534,7 @@ bool TradingModule::shouldClosePosition(const std::string& symbol,
     return !(hasContract && hasSpot);
 }
 
-// 整精度的輔助函數
+// 精度的輔助函數
 double TradingModule::adjustPrecision(double quantity, const std::string& symbol) {
     double currentPrice = exchange.getSpotPrice(symbol);
     
