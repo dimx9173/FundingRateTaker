@@ -28,9 +28,6 @@ public:
     virtual bool createSpotOrder(const std::string& symbol, 
                                const std::string& side, 
                                double qty) = 0;
-    virtual bool createSpotOrderIncludeFee(const std::string& symbol, 
-                               const std::string& side, 
-                               double qty) = 0;
     virtual void closePosition(const std::string& symbol) = 0;
     virtual std::string getLastError() = 0;
 

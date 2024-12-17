@@ -19,7 +19,6 @@ public:
         const std::string&
     ));
     MOCK_METHOD3(createSpotOrder, bool(const std::string&, const std::string&, double));
-    MOCK_METHOD3(createSpotOrderIncludeFee, bool(const std::string&, const std::string&, double));
     MOCK_METHOD1(closePosition, void(const std::string&));
     MOCK_METHOD1(getInstruments, std::vector<std::string>(const std::string&));
     MOCK_METHOD0(getLastError, std::string());

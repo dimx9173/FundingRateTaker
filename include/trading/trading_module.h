@@ -34,7 +34,8 @@ private:
     bool shouldClosePosition(const std::string& symbol, 
                            const std::vector<std::pair<std::string, double>>& topRates);
     
-    double adjustPrecision(double quantity, const std::string& symbol);
+    double adjustSpotPrecision(double quantity, const std::string& symbol);
+    double adjustContractPrecision(double quantity, const std::string& symbol);
     double getMinOrderSize(const std::string& symbol);
     double getMinOrderValue(const std::string& symbol);
     double calculateTotalInvestment(
@@ -56,7 +57,7 @@ private:
     double calculateDepthImpact(const Json::Value& orderbook, double size);
     double calculateRebalanceCost(const std::string& symbol, double size);
     double calculateExpectedProfit(double size, double fundingRate);
-
+    bool createSpotOrderIncludeFee(const std::string& symbol, const std::string& side, double qty);
 public:
     static TradingModule& getInstance(IExchange& exchange);
     std::vector<std::pair<std::string, double>> getTopFundingRates();

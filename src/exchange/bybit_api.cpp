@@ -313,24 +313,6 @@ bool BybitAPI::createSpotOrder(const std::string& symbol, const std::string& sid
     return true;
 }
 
-bool BybitAPI::createSpotOrderIncludeFee(const std::string& symbol, const std::string& side, double qty) {
-    std::map<std::string, std::string> params;
-    params["symbol"] = symbol;
-    params["side"] = side;
-    params["orderType"] = "MARKET";
-    double fee = getSpotFeeRate();
-    params["qty"] = std::to_string(qty * (1 + fee)); //現貨倉位需要整數
-    params["category"] = "spot";
-    params["marketUnit"] = "baseCoin";
-    
-    Json::Value response = makeRequest("/v5/order/create", "POST", params);
-    if (response["retCode"].asInt() != 0) {
-        lastError = response["retMsg"].asString();
-        return false;
-    }
-    return true;
-}
-
 
 void BybitAPI::closePosition(const std::string& symbol) {
     // 先獲取當前持倉
@@ -675,4 +657,3 @@ double BybitAPI::getContractFeeRate() {
     // 如果API請求失敗，返回預設值
     return 0.0006; // 0.06% 作為預設值
 }
-

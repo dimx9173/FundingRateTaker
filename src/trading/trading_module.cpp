@@ -58,7 +58,7 @@ double TradingModule::calculatePositionSize(const std::string& symbol, double ra
 
     // 計算數量並調整精度
     double quantity = adjustedPosition / currentPrice;
-    quantity = adjustPrecision(quantity, symbol);
+    quantity = adjustSpotPrecision(quantity, symbol);
     
     // 確保最終倉位價值不小於最小要求
     double finalValue = quantity * currentPrice;
@@ -373,10 +373,11 @@ bool TradingModule::shouldClosePosition(const std::string& symbol,
 }
 
 // 精度輔助函數
-double TradingModule::adjustPrecision(double quantity, const std::string& symbol) {
-    double currentPrice = exchange.getSpotPrice(symbol);
+double TradingModule::adjustContractPrecision(double quantity, const std::string& symbol) {
+    double currentPrice = exchange.getContractPrice(symbol);
     
     if (currentPrice <= 0) {
+        logger.error("無法獲取合約價格: " + symbol);
         return 0.0;  // 如果無法獲取價格，返回0
     }
     
@@ -388,7 +389,34 @@ double TradingModule::adjustPrecision(double quantity, const std::string& symbol
     } else if (currentPrice >= 100.0) {   // BNB等中價幣
         return std::floor(quantity * 10) / 10.0;      // 0.1
     } else {                              // 其他低價幣
-        return std::floor(quantity);                  // 1.0
+        return std::floor(quantity);                 // 1.0 //只能整數
+    }
+}
+
+// 精度輔助函數
+double TradingModule::adjustSpotPrecision(double quantity, const std::string& symbol) {
+    double currentPrice = exchange.getSpotPrice(symbol);
+    
+    if (currentPrice <= 0) {
+        logger.error("無法獲取現貨價格: " + symbol);
+        return 0.0;  // 如果無法獲取價格，返回0
+    }
+
+    
+    
+    // 根據幣價動態調整精度
+    if (currentPrice >= 10000.0) {  // BTC等高價幣
+        return std::floor(quantity * 1000) / 1000.0;  // 0.001
+    } else if (currentPrice >= 1000.0) {  // ETH等中價幣
+        return std::floor(quantity * 100) / 100.0;    // 0.01
+    } else if (currentPrice >= 100.0) {   // BNB等中價幣
+        return std::floor(quantity * 100) / 100.0;      // 0.01
+    } else if (currentPrice >= 10.0) {   // 其他低價幣
+        return std::floor(quantity * 100) / 100.0;      // 0.01
+    } else if (currentPrice >= 1.0) {                               
+        return std::floor(quantity * 100) / 100.0;      // 0.01
+    } else {
+        return std::floor(quantity * 10) / 10.0;                 // 0.1
     }
 }
 
@@ -561,7 +589,7 @@ void TradingModule::handleNewPositions(
         
         // 計算數量
         double quantity = positionSize / spotPrice;
-        quantity = adjustPrecision(quantity, symbol);
+        quantity = adjustSpotPrecision(quantity, symbol);
         
         // 檢查最小訂單量
         if (quantity < getMinOrderSize(symbol)) {
@@ -574,7 +602,7 @@ void TradingModule::handleNewPositions(
         logger.info("數量: " + std::to_string(quantity));
         
         // 建立現貨多倉
-        bool spotSuccess = exchange.createSpotOrder(symbol, "Buy", quantity);
+        bool spotSuccess = createSpotOrderIncludeFee(symbol, "Buy", quantity);
         if (!spotSuccess) {
             handleError(symbol, exchange.getLastError());
             continue;
@@ -615,7 +643,7 @@ void TradingModule::handleExistingPositions(
             
             // 關閉現貨倉位
             if (spotSize > 0) {
-                spotSize = adjustPrecision(spotSize, symbol);
+                spotSize = adjustSpotPrecision(spotSize, symbol);
                 if (spotSize >= getMinOrderSize(symbol)) {
                     bool success = exchange.createSpotOrder(symbol, "Sell", spotSize);
                     if (!success) {
@@ -626,7 +654,7 @@ void TradingModule::handleExistingPositions(
             
             // 關閉合約倉位
             if (contractSize > 0) {
-                contractSize = adjustPrecision(contractSize, symbol);
+                contractSize = adjustContractPrecision(contractSize, symbol);
                 if (contractSize >= getMinOrderSize(symbol)) {
                     Json::Value result = exchange.createOrder(symbol, "Buy", contractSize, "linear", "MARKET");
                     if (result["retCode"].asInt() != 0) {
@@ -677,11 +705,11 @@ void TradingModule::balancePositions(
         if (spotValue < minPositionValue / 2 || spotValue > maxPositionValue / 2) {
             logger.info("現貨倉位價值: " + std::to_string(spotValue) + " USDT, 需要重平衡");
             if (spotValue < minPositionValue / 2) {
-                double needBuySize = adjustPrecision((minPositionValue / 2 - spotValue) / spotPrice, symbol);
+                double needBuySize = adjustSpotPrecision((minPositionValue / 2 - spotValue) / spotPrice, symbol);
                 logger.info("現貨倉位價值不足,需補足: " + std::to_string(needBuySize) + " " + symbol);
                 bool sizeDiffValid = needBuySize >= getMinOrderSize(symbol);//倉位差異是否大於最小訂單量
                 if (sizeDiffValid) {
-                    bool spotSuccess = exchange.createSpotOrder(symbol, "Buy", needBuySize);
+                    bool spotSuccess = createSpotOrderIncludeFee(symbol, "Buy", needBuySize);
                     if (!spotSuccess) {
                         logger.error("重平衡現貨倉位失敗: " + symbol);
                         continue;
@@ -690,7 +718,7 @@ void TradingModule::balancePositions(
                     logger.info("現貨倉位價值不足,但訂單量不足,不用補足");
                 }
             } else if (spotValue > maxPositionValue / 2) {
-                double needSellSize = adjustPrecision((spotValue - maxPositionValue / 2) / spotPrice, symbol);
+                double needSellSize = adjustSpotPrecision((spotValue - maxPositionValue / 2) / spotPrice, symbol);
                 logger.info("現貨倉位價值超過,需賣出: " + std::to_string(needSellSize) + " " + symbol);
                 bool sizeDiffValid = needSellSize >= getMinOrderSize(symbol);//倉位差異是否大於最小訂單量
                 if (sizeDiffValid) {
@@ -708,8 +736,8 @@ void TradingModule::balancePositions(
         spotSize = exchange.getSpotBalance(symbol);
         //2.確認對衝合約現貨組合倉位差異是否平衡，不足需平衡
         double sizeDiff = std::abs(spotSize - contractSize);//倉位差異
-        sizeDiff = adjustPrecision(sizeDiff, symbol);//調整精度
         bool sizeDiffValid = sizeDiff >= getMinOrderSize(symbol);//倉位差異是否大於最小訂單量
+        sizeDiff = adjustContractPrecision(sizeDiff, symbol);//調整精度
         logger.info("倉位差異: " + std::to_string(sizeDiff) + " " + symbol);
         if (sizeDiffValid) {
             // 由於現貨倉位已經平衡，所以只需要平衡合約倉位
@@ -961,4 +989,13 @@ double TradingModule::calculateExpectedProfit(double size, double fundingRate) {
     double periodRate = annualRate * (holdingDays / 365.0);
     
     return size * std::abs(periodRate);
+}
+
+
+bool TradingModule::createSpotOrderIncludeFee(const std::string& symbol, const std::string& side, double qty) {
+    double fee = exchange.getSpotFeeRate();
+    qty = qty * (1 + fee * ( 1 + fee )); //現貨倉位
+    qty = adjustSpotPrecision(qty, symbol);
+    logger.info("實際現貨含手續費下單倉位: " + std::to_string(qty) + " " + symbol);
+    return exchange.createSpotOrder(symbol, side, qty);
 }

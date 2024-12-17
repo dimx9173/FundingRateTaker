@@ -37,9 +37,6 @@ public:
     bool createSpotOrder(const std::string& symbol, 
                         const std::string& side, 
                         double qty) override;
-    bool createSpotOrderIncludeFee(const std::string& symbol, 
-                        const std::string& side, 
-                        double qty) override;
     void closePosition(const std::string& symbol) override;
     void displayPositions() override;
     std::vector<std::string> getInstruments(const std::string& category = "linear") override;
