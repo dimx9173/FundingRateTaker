@@ -28,10 +28,21 @@ public:
     virtual bool createSpotOrder(const std::string& symbol, 
                                const std::string& side, 
                                double qty) = 0;
+    virtual bool createSpotOrderIncludeFee(const std::string& symbol, 
+                               const std::string& side, 
+                               double qty) = 0;
     virtual void closePosition(const std::string& symbol) = 0;
+    virtual std::string getLastError() = 0;
 
     // 新方法
     virtual Json::Value getSpotBalances() = 0;
+    virtual double getSpotBalance(const std::string& symbol) = 0;
+    virtual std::vector<std::pair<std::string, std::vector<double>>> getFundingHistory() = 0;
+    virtual double getContractPrice(const std::string& symbol) = 0;
+    virtual Json::Value getOrderBook(const std::string& symbol) = 0;
+    virtual double getCurrentFundingRate(const std::string& symbol) = 0;
+    virtual double getSpotFeeRate() = 0;
+    virtual double getContractFeeRate() = 0;
 };
 
 #endif // EXCHANGE_INTERFACE_H 

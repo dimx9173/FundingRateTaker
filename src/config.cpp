@@ -10,8 +10,8 @@ Config::Config() {
 }
 
 void Config::loadConfigFiles() {
-    loadFile("config.json", config);
-    loadFile("pair_list.json", pair_list);
+    loadFile("config/config.json", config);
+    loadFile("config/pair_list.json", pair_list);
 }
 
 void Config::loadFile(const std::string& filename, Json::Value& target) {
@@ -75,9 +75,6 @@ double Config::getMaxTradeAmount() const {
     return config["trading"]["max_trade_amount"].asDouble();
 }
 
-int Config::getMaxPositions() const {
-    return config["trading"]["max_positions"].asInt();
-}
 
 double Config::getStopLossPercentage() const {
     return config["trading"]["stop_loss_percentage"].asDouble();
@@ -168,4 +165,17 @@ double Config::getMinPositionValue() const {
 
 double Config::getMaxPositionValue() const { 
     return config["trading"]["max_position_value"].asDouble(); 
+}
+
+int Config::getFundingHoldingDays() const {
+    return config["trading"]["funding_rate_scoring"]["holding_days"].asInt();
+}
+
+std::vector<std::string> Config::getUnsupportedSymbols() const {
+    std::vector<std::string> pairs;
+    const Json::Value& pairList = pair_list["unsupported_symbols"];
+    for (const auto& pair : pairList) {
+        pairs.push_back(pair.asString());
+    }
+    return pairs;
 }

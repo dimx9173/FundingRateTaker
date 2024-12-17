@@ -13,5 +13,9 @@
         "DOTUSDT",
         "SUIUSDT",
         "XLMUSDT"
+    ],
+    "unsupported_symbols": [
+        "SUIUSDT",
+        "USDTUSDT"
     ]
 }

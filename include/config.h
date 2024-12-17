@@ -42,7 +42,6 @@ public:
     std::vector<std::string> getTradingPairs() const;
     double getMinTradeAmount() const;
     double getMaxTradeAmount() const;
-    int getMaxPositions() const;
     double getStopLossPercentage() const;
     double getTotalInvestment() const;
     
@@ -55,4 +54,6 @@ public:
     double getScalingFactor() const;
     double getMinPositionValue() const;
     double getMaxPositionValue() const;
+    std::vector<std::string> getUnsupportedSymbols() const;
+    int getFundingHoldingDays() const;
 }; 

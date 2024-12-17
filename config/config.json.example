@@ -17,9 +17,8 @@
     },
     "trading": {
         "total_investment": 1000, // 總投資金額
-        "min_position_value": 100, // 最小交易金額
-        "max_position_value": 200, // 最大交易金額
-        "max_positions": 5, // 最大倉位數量
+        "min_position_value": 100, // 最小倉位金額
+        "max_position_value": 200, // 最大倉位金額
         "stop_loss_percentage": 5, // 停損百分比
         "check_interval_minutes": 5, // 檢查間隔時間
         "risk_management": {
@@ -28,9 +27,10 @@
             "position_scaling": true, // 是否啟用倉位調整
             "scaling_factor": 1.5 // 倉位調整係數
         },
-        "funding_history_days": 7,
+        "funding_history_days": 4,
         "funding_rate_scoring": {
-            "periods": [8, 24, 72], // 不同時間段的資金費率
+            "holding_days": 14,  // 預期持有天數
+            "periods": [3, 6, 9], // 計算資金費率分數的時間段
             "weights": [3.0, 2.0, 1.0], // 不同時間段的權重
             "settlement_times_utc": ["00:00", "08:00", "16:00"], // 不同時間段的結算時間
             "pre_settlement_minutes": 30 // 結算前預留時間

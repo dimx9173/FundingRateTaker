@@ -12,7 +12,7 @@ private:
     const std::string API_KEY;
     const std::string API_SECRET;
     const std::string BASE_URL;
-
+    std::string lastError;
     BybitAPI();
 
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp);
@@ -37,10 +37,21 @@ public:
     bool createSpotOrder(const std::string& symbol, 
                         const std::string& side, 
                         double qty) override;
+    bool createSpotOrderIncludeFee(const std::string& symbol, 
+                        const std::string& side, 
+                        double qty) override;
     void closePosition(const std::string& symbol) override;
     void displayPositions() override;
     std::vector<std::string> getInstruments(const std::string& category = "linear") override;
     Json::Value getSpotBalances() override;
+    double getSpotBalance(const std::string& symbol) override;
+    std::string getLastError() override;
+    std::vector<std::pair<std::string, std::vector<double>>> getFundingHistory() override;
+    double getContractPrice(const std::string& symbol) override;
+    Json::Value getOrderBook(const std::string& symbol) override;
+    double getCurrentFundingRate(const std::string& symbol) override;
+    double getSpotFeeRate() override;
+    double getContractFeeRate() override;
 };
 
 #endif // BYBIT_API_H

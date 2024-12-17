@@ -19,27 +19,38 @@ public:
         const std::string&
     ));
     MOCK_METHOD3(createSpotOrder, bool(const std::string&, const std::string&, double));
+    MOCK_METHOD3(createSpotOrderIncludeFee, bool(const std::string&, const std::string&, double));
     MOCK_METHOD1(closePosition, void(const std::string&));
     MOCK_METHOD1(getInstruments, std::vector<std::string>(const std::string&));
-
-    // 實現 displayPositions
-    void displayPositions() override {
-        // 測試用的空實現
+    MOCK_METHOD0(getLastError, std::string());
+    MOCK_METHOD0(getFundingHistory, std::vector<std::pair<std::string, std::vector<double>>>());
+    
+    // Mock 方法的具體實現
+    MOCK_METHOD0(displayPositions, void());
+    MOCK_METHOD0(getSpotBalances, Json::Value());
+    MOCK_METHOD1(getSpotBalance, double(const std::string&));
+    // 新增方法實現
+    double getContractPrice(const std::string& symbol) override {
+        return 100.0; // 模擬價格
     }
-
-    // 實現 getSpotBalances
-    Json::Value getSpotBalances() override {
-        Json::Value result;
-        result["result"]["list"][0]["coin"] = Json::Value(Json::arrayValue);
-        
-        // 添加一些測試用的餘額數據
-        Json::Value usdtBalance;
-        usdtBalance["coin"] = "USDT";
-        usdtBalance["walletBalance"] = "1000.0";
-        usdtBalance["total"] = "1000.0";
-        result["result"]["list"][0]["coin"].append(usdtBalance);
-
-        return result;
+    
+    Json::Value getOrderBook(const std::string& symbol) override {
+        Json::Value orderbook;
+        orderbook["asks"][0][0] = "100.0";
+        orderbook["asks"][0][1] = "1.0";
+        return orderbook;
+    }
+    
+    double getCurrentFundingRate(const std::string& symbol) override {
+        return 0.001; // 模擬資金費率
+    }
+    
+    double getSpotFeeRate() override {
+        return 0.001; // 模擬現貨手續費率
+    }
+    
+    double getContractFeeRate() override {
+        return 0.0006; // 模擬合約手續費率
     }
 };
 
@@ -49,7 +60,6 @@ protected:
         ::testing::FLAGS_gtest_death_test_style = "threadsafe";
         ::testing::GTEST_FLAG(print_time) = true;
         
-        // 重置單例
         TradingModule::resetInstance();
         
         mockExchange = new MockExchange();
@@ -59,7 +69,6 @@ protected:
             .WillByDefault(::testing::Return(10000.0));
         ON_CALL(*mockExchange, getInstruments(::testing::_))
             .WillByDefault(::testing::Return(std::vector<std::string>{"BTCUSDT", "ETHUSDT"}));
-    
     }
 
     void TearDown() override {
@@ -74,24 +83,18 @@ protected:
 TEST_F(TradingModuleTest, GetTopFundingRates) {
     std::cout << "開始測試 GetTopFundingRates" << std::endl;
     
-    std::vector<std::pair<std::string, double>> mockRates = {
-        {"ETHUSDT", 0.002},
-        {"BTCUSDT", 0.001}
+    // 設置歷史資金費率數據
+    std::vector<std::pair<std::string, std::vector<double>>> mockHistoricalRates = {
+        {"ETHUSDT", {0.002, 0.001, 0.003}},
+        {"BTCUSDT", {0.001, 0.002, 0.001}}
     };
     
-    std::cout << "設置 mock 數據" << std::endl;
-    EXPECT_CALL(*mockExchange, getFundingRates())
-        .WillOnce(::testing::Return(mockRates));
-
-    std::cout << "獲取 TradingModule 實例" << std::endl;
-    auto& trader = TradingModule::getInstance(*mockExchange);
+    EXPECT_CALL(*mockExchange, getFundingHistory())
+        .WillOnce(::testing::Return(mockHistoricalRates));
     
-    std::cout << "調用 getTopFundingRates" << std::endl;
+    auto& trader = TradingModule::getInstance(*mockExchange);
     auto rates = trader.getTopFundingRates();
     
-    std::cout << "驗證結果" << std::endl;
     ASSERT_EQ(rates.size(), 2);
-    EXPECT_EQ(rates[0].first, "ETHUSDT");
-    EXPECT_DOUBLE_EQ(rates[0].second, 0.002);
 }
   

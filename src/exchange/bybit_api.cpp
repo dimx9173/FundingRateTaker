@@ -7,6 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <thread>
 #include "logger.h"
 
 std::mutex BybitAPI::mutex_;
@@ -46,6 +47,18 @@ std::string BybitAPI::generateSignature(const std::string& params, const std::st
 
 Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string& method, 
                                   const std::map<std::string, std::string>& params) {
+    Logger logger;
+    
+    // 檢查是否為無效的交易對請求
+    auto symbolIter = params.find("symbol");
+    if (symbolIter != params.end() && symbolIter->second == "USDTUSDT") {
+        logger.error("無效的交易對請求: USDTUSDT");
+        Json::Value errorResponse;
+        errorResponse["retCode"] = 10001;
+        errorResponse["retMsg"] = "Invalid trading pair";
+        return errorResponse;
+    }
+    
     CURL* curl = curl_easy_init();
     std::string response;
     
@@ -63,6 +76,10 @@ Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string
         ).count();
         std::string timestamp = std::to_string(millis);
         
+        // 請求參數
+        // logger.info("請求URL: " + url);
+        // logger.info("請求時間戳: " + timestamp);
+        
         if (method == "GET") {
             for (const auto& [key, value] : params) {
                 if (!paramString.empty()) paramString += "&";
@@ -70,6 +87,7 @@ Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string
             }
             if (!paramString.empty()) {
                 url += "?" + paramString;
+                // logger.info("GET參數: " + paramString);
             }
         } else if (method == "POST") {
             Json::Value jsonParams;
@@ -81,9 +99,17 @@ Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string
             if (!paramString.empty() && paramString[paramString.length()-1] == '\n') {
                 paramString.erase(paramString.length()-1);
             }
+            // logger.info("POST數據: " + paramString);
         }
 
         std::string signature = generateSignature(paramString, timestamp);
+        // logger.info("生成的簽名: " + signature);
+        
+        // 記錄請求頭
+        // logger.info("請求頭:");
+        // logger.info("X-BAPI-API-KEY: " + API_KEY);
+        // logger.info("X-BAPI-TIMESTAMP: " + timestamp);
+        // logger.info("X-BAPI-SIGN: " + signature);
         
         struct curl_slist* headers = nullptr;
         headers = curl_slist_append(headers, ("X-BAPI-API-KEY: " + API_KEY).c_str());
@@ -92,6 +118,7 @@ Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string
         headers = curl_slist_append(headers, "X-BAPI-RECV-WINDOW: 5000");
         headers = curl_slist_append(headers, "Content-Type: application/json");
         
+        // 設置CURL選項
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -104,25 +131,36 @@ Json::Value BybitAPI::makeRequest(const std::string& endpoint, const std::string
             }
         }
         
+        // 執行請求
         CURLcode res = curl_easy_perform(curl);
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
         
         if (res != CURLE_OK) {
-            std::cerr << "Curl request failed: " << curl_easy_strerror(res) << std::endl;
+            logger.error("CURL請求失敗: " + std::string(curl_easy_strerror(res)));
             return Json::Value();
         }
+        
+        // 記錄響應
+        // logger.info("API響應: " + response);
     }
     
+    // 解析響應
     Json::Value root;
     Json::Reader reader;
     if (!response.empty() && reader.parse(response, root)) {
-        if (root.isObject() && root.isMember("retCode") && root["retCode"].asInt() != 0) {
-            std::cout << "API錯誤: " << root["retMsg"].asString() << std::endl;
+        if (root.isObject() && root.isMember("retCode")) {
+            if (root["retCode"].asInt() != 0) {
+                logger.error("API錯誤碼: " + std::to_string(root["retCode"].asInt()));
+                logger.error("錯誤信息: " + root["retMsg"].asString());
+            } else {
+                // logger.info("請求成功完成");
+            }
         }
         return root;
     }
     
+    logger.error("JSON解析失敗");
     return Json::Value();
 }
 
@@ -137,79 +175,98 @@ BybitAPI& BybitAPI::getInstance() {
 std::vector<std::pair<std::string, double>> BybitAPI::getFundingRates() {
     std::vector<std::pair<std::string, double>> rates;
     auto pairs = Config::getInstance().getTradingPairs();
-    auto periods = Config::getInstance().getFundingPeriods();
-    auto weights = Config::getInstance().getFundingWeights();
+    int historyDays = Config::getInstance().getFundingHistoryDays();
     
     Logger logger;
-    logger.info("開始獲取資金費率，交易對數量: " + std::to_string(pairs.size()));
-    
-    if (periods.empty() || weights.empty() || periods.size() != weights.size()) {
-        logger.error("錯誤: 資金費率計算週期或權重配置不正確");
-        return rates;
-    }
-    
-    int maxPeriod = *std::max_element(periods.begin(), periods.end());
+    logger.info("開始獲取資金費率歷史數據");
     
     for (const auto& symbol : pairs) {
-        logger.info("處理交易對: " + symbol);
-        
         std::map<std::string, std::string> params;
         params["symbol"] = symbol;
         params["category"] = "linear";
-        params["limit"] = std::to_string(maxPeriod);
+        params["limit"] = std::to_string(historyDays * 3); // 每天3次資金費率
         
         try {
             Json::Value response = makeRequest("/v5/market/funding/history", "GET", params);
             
             if (!response.isObject() || response["retCode"].asInt() != 0 || 
-                !response["result"]["list"].isArray() || response["result"]["list"].empty()) {
-                logger.error("獲取資金費率失敗: " + symbol);
+                !response["result"]["list"].isArray()) {
                 continue;
             }
             
+            // 只取最新的一個資金費率
             const Json::Value& list = response["result"]["list"];
-            double weightedScore = 0.0;
-            double totalWeight = 0.0;
-            
-            // 對每個週期計算加權平均
-            for (size_t i = 0; i < periods.size(); i++) {
-                int periodLimit = periods[i];
-                double periodSum = 0.0;
-                int validCount = 0;
-                
-                // 計算當前週期的平均值
-                for (int j = 0; j < list.size() && j < periodLimit; j++) {
-                    try {
-                        double rate = std::stod(list[j]["fundingRate"].asString());
-                        periodSum += rate;
-                        validCount++;
-                    } catch (const std::exception& e) {
-                        logger.error("解析資金費率失敗: " + std::string(e.what()));
-                        continue;
-                    }
+            if (!list.empty()) {
+                try {
+                    double rate = std::stod(list[0]["fundingRate"].asString());
+                    rates.emplace_back(symbol, rate);
+                } catch (const std::exception& e) {
+                    logger.error("解析資金費率失敗: " + symbol);
+                    continue;
                 }
-                
-                if (validCount > 0) {
-                    double periodAvg = periodSum / validCount;
-                    weightedScore += periodAvg * weights[i];
-                    totalWeight += weights[i];
-                }
-            }
-            
-            if (totalWeight > 0) {
-                double finalScore = weightedScore / totalWeight;
-                rates.emplace_back(symbol, finalScore);
-                logger.info(symbol + " 最終加權分數: " + std::to_string(finalScore));
             }
             
         } catch (const std::exception& e) {
-            logger.error("處理資金費率時發生異常: " + symbol + " - " + e.what());
+            logger.error("處理資金費率時發生異常: " + symbol);
             continue;
         }
     }
     
     return rates;
 }
+
+std::vector<std::pair<std::string, std::vector<double>>> BybitAPI::getFundingHistory() {
+    std::vector<std::pair<std::string, std::vector<double>>> rates;
+    auto pairs = Config::getInstance().getTradingPairs();
+    int historyDays = Config::getInstance().getFundingHistoryDays();
+    
+    Logger logger;
+    logger.info("開始獲取資金費率歷史數據");
+    
+    for (const auto& symbol : pairs) {
+        std::map<std::string, std::string> params;
+        params["symbol"] = symbol;
+        params["category"] = "linear";
+        params["limit"] = std::to_string(historyDays * 3); // 每天3次資金費率
+        
+        try {
+            Json::Value response = makeRequest("/v5/market/funding/history", "GET", params);
+            
+            if (!response.isObject() || response["retCode"].asInt() != 0 || 
+                !response["result"]["list"].isArray()) {
+                logger.error("獲取" + symbol + "資金費率歷史失敗");
+                continue;
+            }
+            
+            std::vector<double> symbolRates;
+            const Json::Value& list = response["result"]["list"];
+            
+            for (const auto& rate : list) {
+                try {
+                    double fundingRate = std::stod(rate["fundingRate"].asString());
+                    symbolRates.push_back(fundingRate);
+                } catch (const std::exception& e) {
+                    logger.error("��析資金費率敗: " + symbol + " - " + e.what());
+                    continue;
+                }
+            }
+            
+            if (!symbolRates.empty()) {
+                rates.emplace_back(symbol, symbolRates);
+            }
+            
+        } catch (const std::exception& e) {
+            logger.error("處理資金費率歷史時發生異常: " + symbol + " - " + e.what());
+            continue;
+        }
+        
+        // 添加短暫延遲以避免API請求過於頻繁
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    
+    return rates;
+}
+
 
 bool BybitAPI::setLeverage(const std::string& symbol, int leverage) {
     std::map<std::string, std::string> params;
@@ -231,7 +288,12 @@ Json::Value BybitAPI::createOrder(const std::string& symbol, const std::string& 
     params["qty"] = std::to_string(qty);
     params["category"] = category;
     
-    return makeRequest("/v5/order/create", "POST", params);
+    Json::Value response = makeRequest("/v5/order/create", "POST", params);
+    if (response["retCode"].asInt() != 0) {
+        lastError = response["retMsg"].asString();
+    }
+    
+    return response;
 }
 
 bool BybitAPI::createSpotOrder(const std::string& symbol, const std::string& side, double qty) {
@@ -239,12 +301,36 @@ bool BybitAPI::createSpotOrder(const std::string& symbol, const std::string& sid
     params["symbol"] = symbol;
     params["side"] = side;
     params["orderType"] = "MARKET";
-    params["qty"] = std::to_string(qty);
+    params["qty"] = std::to_string(qty); //現貨倉位需要整數
     params["category"] = "spot";
+    params["marketUnit"] = "baseCoin";
     
     Json::Value response = makeRequest("/v5/order/create", "POST", params);
-    return response.isObject() && response["retCode"].asInt() == 0;
+    if (response["retCode"].asInt() != 0) {
+        lastError = response["retMsg"].asString();
+        return false;
+    }
+    return true;
 }
+
+bool BybitAPI::createSpotOrderIncludeFee(const std::string& symbol, const std::string& side, double qty) {
+    std::map<std::string, std::string> params;
+    params["symbol"] = symbol;
+    params["side"] = side;
+    params["orderType"] = "MARKET";
+    double fee = getSpotFeeRate();
+    params["qty"] = std::to_string(qty * (1 + fee)); //現貨倉位需要整數
+    params["category"] = "spot";
+    params["marketUnit"] = "baseCoin";
+    
+    Json::Value response = makeRequest("/v5/order/create", "POST", params);
+    if (response["retCode"].asInt() != 0) {
+        lastError = response["retMsg"].asString();
+        return false;
+    }
+    return true;
+}
+
 
 void BybitAPI::closePosition(const std::string& symbol) {
     // 先獲取當前持倉
@@ -370,7 +456,7 @@ void BybitAPI::displayPositions() {
                 totalValue += std::stod(pos["positionValue"].asString());
                 totalPnL += std::stod(pos["unrealisedPnl"].asString());
             } catch (const std::exception& e) {
-                logger.error("解析合約倉位數據失敗: " + std::string(e.what()));
+                logger.error("解析合約倉數據失敗: " + std::string(e.what()));
                 continue;
             }
         }
@@ -448,13 +534,14 @@ std::vector<std::string> BybitAPI::getInstruments(const std::string& category) {
 
 Json::Value BybitAPI::getSpotBalances() {
     Logger logger;
-    logger.info("獲取現貨餘額");
+    // logger.info("獲取現貨餘額");
     
     std::map<std::string, std::string> params;
     params["accountType"] = "UNIFIED";
     
     try {
         Json::Value response = makeRequest("/v5/account/wallet-balance", "GET", params);
+        // logger.info("現貨餘額: " + Json::FastWriter().write(response));
         
         if (response["retCode"].asInt() != 0) {
             logger.error("獲取現貨餘額失敗: " + response["retMsg"].asString());
@@ -466,5 +553,126 @@ Json::Value BybitAPI::getSpotBalances() {
         logger.error("獲取現貨餘額異常: " + std::string(e.what()));
         return Json::Value(Json::objectValue);
     }
+}
+
+double BybitAPI::getSpotBalance(const std::string& symbol) {
+    Logger logger;
+    Json::Value spotBalances = getSpotBalances();
+    
+    // 從 symbol 中提取幣種名稱（例如從 "BTCUSDT" 提取 "BTC"）
+    std::string coin = symbol.substr(0, symbol.length() - 4); // 假設都是 XXXUSDT 格式
+    
+    if (spotBalances.isObject() && 
+        spotBalances["result"]["list"].isArray() && 
+        spotBalances["result"]["list"][0]["coin"].isArray()) {
+        
+        const Json::Value& coins = spotBalances["result"]["list"][0]["coin"];
+        for (const auto& coinData : coins) {
+            if (coinData["coin"].asString() == coin) {
+                double balance = std::stod(coinData["walletBalance"].asString());
+                logger.info(coin + " 現貨餘額: " + std::to_string(balance));
+                return balance;
+            }
+        }
+    }
+    
+    logger.error("未找到 " + coin + " 的餘額");
+    return 0.0;
+}
+
+std::string BybitAPI::getLastError() {
+    return lastError;
+}
+
+// 獲取合約價格
+double BybitAPI::getContractPrice(const std::string& symbol) {
+    std::map<std::string, std::string> params;
+    params["symbol"] = symbol;
+    params["category"] = "linear";
+    
+    Json::Value response = makeRequest("/v5/market/tickers", "GET", params);
+    
+    if (response.isObject() && response["retCode"].asInt() == 0 && 
+        response["result"]["list"].isArray() && !response["result"]["list"].empty()) {
+        return std::stod(response["result"]["list"][0]["lastPrice"].asString());
+    }
+    return 0.0;
+}
+
+// 獲取訂單簿
+Json::Value BybitAPI::getOrderBook(const std::string& symbol) {
+    std::map<std::string, std::string> params;
+    params["symbol"] = symbol;
+    params["category"] = "linear";
+    params["limit"] = "50";  // 獲取前50層深度
+    
+    Json::Value response = makeRequest("/v5/market/orderbook", "GET", params);
+    
+    // 添加日誌輸出查看數據
+    // Logger logger;
+    // logger.info("訂單簿原始數據: " + Json::FastWriter().write(response));
+    
+    return response;
+}
+
+// 獲取當前資金費率
+double BybitAPI::getCurrentFundingRate(const std::string& symbol) {
+    std::map<std::string, std::string> params;
+    params["symbol"] = symbol;
+    params["category"] = "linear";
+    
+    Json::Value response = makeRequest("/v5/market/tickers", "GET", params);
+    
+    if (response.isObject() && response["retCode"].asInt() == 0 && 
+        response["result"]["list"].isArray() && !response["result"]["list"].empty()) {
+        return std::stod(response["result"]["list"][0]["fundingRate"].asString());
+    }
+    return 0.0;
+}
+
+// 獲取現貨手續費率
+double BybitAPI::getSpotFeeRate() {
+    Logger logger;
+    std::map<std::string, std::string> params;
+    params["category"] = "spot";
+
+    Json::Value response = makeRequest("/v5/account/fee-rate", "GET", params);
+    
+    if (response.isObject() && response["retCode"].asInt() == 0 && 
+        response["result"]["list"].isArray() && !response["result"]["list"].empty()) {
+        try {
+            // 獲取taker費率作為保守估計
+            double takerFeeRate = std::stod(response["result"]["list"][0]["takerFeeRate"].asString());
+            return takerFeeRate;
+        } catch (const std::exception& e) {
+            logger.error("解析現貨手續費率失敗: " + std::string(e.what()));
+        }
+    }
+    
+    // 如果API請求失敗，返回預設值
+    return 0.001; // 0.1% 作為預設值
+}
+
+// 獲取合約手續費率
+double BybitAPI::getContractFeeRate() {
+    Logger logger;
+    std::map<std::string, std::string> params;
+    params["category"] = "linear";
+
+    Json::Value response = makeRequest("/v5/account/fee-rate", "GET", params);
+    
+    if (response.isObject() && response["retCode"].asInt() == 0 && 
+        response["result"]["list"].isArray() && !response["result"]["list"].empty()) {
+        try {
+            // 獲取taker費率作為保守估計
+            double takerFeeRate = std::stod(response["result"]["list"][0]["takerFeeRate"].asString());
+            return takerFeeRate;
+        } catch (const std::exception& e) {
+            logger.error("解析合約手續費率失敗: " + std::string(e.what()));
+        }
+    }
+    
+    // 如果API請求失敗，返回預設值
+    return 0.0006; // 0.06% 作為預設值
 }
 

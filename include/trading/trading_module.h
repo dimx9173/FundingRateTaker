@@ -7,7 +7,7 @@
 #include <mutex>
 #include <vector>
 #include <utility>
-#include "../logger.h"
+#include "logger.h"
 
 std::vector<std::string> splitString(const std::string& str, const std::string& delimiter);
 
@@ -20,6 +20,13 @@ private:
     Logger logger;
 
     TradingModule(IExchange& exchange);
+    struct BalanceCheckResult {
+        bool needBalance;
+        double priceDiff;
+        double depthImpact;
+        double estimatedCost;
+        double expectedProfit;
+    };
     double calculatePositionSize(const std::string& symbol, double rate);
     bool checkTotalPositionLimit();
     bool isNearSettlement();
@@ -34,6 +41,21 @@ private:
         const std::map<std::string, std::pair<double, double>>& positions, 
         IExchange& exchange);
     double calculateAdjustedPosition(double basePosition, double rate);
+    void updateUnsupportedSymbols(const std::string& symbol);
+    std::map<std::string, std::pair<double, double>> getCurrentPositionSizes();
+    void handleNewPositions(const std::vector<std::pair<std::string, double>>& topRates,
+                            const std::map<std::string, std::pair<double, double>>& positionSizes);
+    void handleExistingPositions(const std::vector<std::string>& currentSymbols,
+                                const std::vector<std::pair<std::string, double>>& topRates);
+    void balancePositions(const std::vector<std::pair<std::string, double>>& topRates,
+                          std::map<std::string, std::pair<double, double>>& positionSizes);
+    void handleError(const std::string& symbol, const std::string& error);
+    BalanceCheckResult checkPositionBalance(const std::string& symbol, 
+                                          double spotSize, 
+                                          double contractSize);
+    double calculateDepthImpact(const Json::Value& orderbook, double size);
+    double calculateRebalanceCost(const std::string& symbol, double size);
+    double calculateExpectedProfit(double size, double fundingRate);
 
 public:
     static TradingModule& getInstance(IExchange& exchange);
