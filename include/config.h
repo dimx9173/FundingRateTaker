@@ -27,6 +27,7 @@ public:
     std::string getBybitApiSecret() const;
     std::string getBybitBaseUrl() const;
     int getDefaultLeverage() const;
+    bool isSpotMarginTradingEnabled() const;
     
     // 資金費率相關配置
     std::vector<std::string> getSettlementTimesUTC() const;

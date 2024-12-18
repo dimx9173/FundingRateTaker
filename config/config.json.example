@@ -6,7 +6,9 @@
             "api_key": "",
             "api_secret": "",
             "base_url": "https://api-demo.bybit.com",
-            "default_leverage": 2
+            "default_leverage": 1 //預設槓桿倍數,
+            "spot_margin_trading": true // 是否支援現貨作為合約保證金
+
         }
     },
     "trading": {

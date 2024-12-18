@@ -129,3 +129,9 @@ std::vector<std::string> Config::getUnsupportedSymbols() const {
     }
     return pairs;
 }
+
+bool Config::isSpotMarginTradingEnabled() const {
+    std::string lowerExchange = getPreferredExchange();
+    std::transform(lowerExchange.begin(), lowerExchange.end(), lowerExchange.begin(), ::tolower);
+    return config["exchanges"][lowerExchange]["spot_margin_trading"].asBool();
+}
