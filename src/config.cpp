@@ -67,46 +67,6 @@ std::vector<std::string> Config::getTradingPairs() const {
     return pairs;
 }
 
-double Config::getMinTradeAmount() const {
-    return config["trading"]["min_trade_amount"].asDouble();
-}
-
-double Config::getMaxTradeAmount() const {
-    return config["trading"]["max_trade_amount"].asDouble();
-}
-
-
-double Config::getStopLossPercentage() const {
-    return config["trading"]["stop_loss_percentage"].asDouble();
-}
-
-double Config::getTotalInvestment() const {
-    return config["trading"]["total_investment"].asDouble();
-}
-
-double Config::getMinPositionSize() const {
-    return config["trading"]["position_limits"]["min_position_size"].asDouble();
-}
-
-double Config::getMaxPositionSize() const {
-    return config["trading"]["position_limits"]["max_position_size"].asDouble();
-}
-
-double Config::getMaxTotalPosition() const {
-    return config["trading"]["position_limits"]["max_total_position"].asDouble();
-}
-
-double Config::getMaxSinglePositionRisk() const {
-    return config["trading"]["risk_management"]["max_single_position_risk"].asDouble();
-}
-
-bool Config::getPositionScaling() const {
-    return config["trading"]["risk_management"]["position_scaling"].asBool();
-}
-
-double Config::getScalingFactor() const {
-    return config["trading"]["risk_management"]["scaling_factor"].asDouble();
-}
 
 std::vector<int> Config::getFundingPeriods() const {
     std::vector<int> periods;
@@ -149,12 +109,6 @@ int Config::getPreSettlementMinutes() const {
     return config["trading"]["funding_rate_scoring"]["pre_settlement_minutes"].asInt();
 }
 
-Json::Value Config::getExchangeConfig(const std::string& exchange) const {
-    std::string lowerExchange = exchange;
-    std::transform(lowerExchange.begin(), lowerExchange.end(), lowerExchange.begin(), ::tolower);
-    return config["exchanges"][lowerExchange];
-}
-
 int Config::getFundingHistoryDays() const {
     return config["trading"]["funding_rate_scoring"]["history_days"].asInt();
 } 
@@ -165,10 +119,6 @@ double Config::getMinPositionValue() const {
 
 double Config::getMaxPositionValue() const { 
     return config["trading"]["max_position_value"].asDouble(); 
-}
-
-int Config::getFundingHoldingDays() const {
-    return config["trading"]["funding_rate_scoring"]["holding_days"].asInt();
 }
 
 std::vector<std::string> Config::getUnsupportedSymbols() const {

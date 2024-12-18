@@ -23,7 +23,6 @@ public:
     // 交易所相關配置
     std::string getPreferredExchange() const;
     bool isExchangeEnabled(const std::string& exchange) const;
-    Json::Value getExchangeConfig(const std::string& exchange) const;
     std::string getBybitApiKey() const;
     std::string getBybitApiSecret() const;
     std::string getBybitBaseUrl() const;
@@ -40,20 +39,7 @@ public:
     int getCheckIntervalMinutes() const;
     int getTopPairsCount() const;
     std::vector<std::string> getTradingPairs() const;
-    double getMinTradeAmount() const;
-    double getMaxTradeAmount() const;
-    double getStopLossPercentage() const;
-    double getTotalInvestment() const;
-    
-    // 倉位管理相關配置
-    double getMinPositionSize() const;
-    double getMaxPositionSize() const;
-    double getMaxTotalPosition() const;
-    double getMaxSinglePositionRisk() const;
-    bool getPositionScaling() const;
-    double getScalingFactor() const;
     double getMinPositionValue() const;
     double getMaxPositionValue() const;
     std::vector<std::string> getUnsupportedSymbols() const;
-    int getFundingHoldingDays() const;
 }; 
