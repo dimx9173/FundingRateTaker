@@ -135,3 +135,23 @@ bool Config::isSpotMarginTradingEnabled() const {
     std::transform(lowerExchange.begin(), lowerExchange.end(), lowerExchange.begin(), ::tolower);
     return config["exchanges"][lowerExchange]["spot_margin_trading"].asBool();
 }
+
+bool Config::getPositionScaling() const {
+    return config["trading"]["position_scaling"].asBool();
+}
+
+double Config::getScalingFactor() const {
+    return config["trading"]["scaling_factor"].asDouble();
+}
+
+double Config::getMinScalingRate() const {
+    return config["trading"]["min_scaling_rate"].asDouble();
+}
+
+double Config::getMaxScalingRate() const {
+    return config["trading"]["max_scaling_rate"].asDouble();
+}
+
+int Config::getFundingHoldingDays() const {
+    return config["trading"]["funding_holding_days"].asInt();
+}

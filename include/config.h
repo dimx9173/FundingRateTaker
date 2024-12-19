@@ -35,7 +35,12 @@ public:
     std::vector<int> getFundingPeriods() const;
     std::vector<double> getFundingWeights() const;
     int getFundingHistoryDays() const;
-    
+    int getFundingHoldingDays() const;
+    double getMinScalingRate() const;
+    double getMaxScalingRate() const;
+    bool getPositionScaling() const;
+    double getScalingFactor() const;
+
     // 交易相關配置
     int getCheckIntervalMinutes() const;
     int getTopPairsCount() const;

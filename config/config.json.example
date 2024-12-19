@@ -16,12 +16,17 @@
         "max_position_value": 200, //最大倉位價值 (USDT)
         "check_interval_minutes": 5, //檢查間隔時間 (分鐘)
         "funding_history_days": 7, //資金費率歷史天數
-        "funding_rate_scoring": {
+        "funding_holding_days": 14, //資金費率預期持有天數
+        "funding_rate_scoring": {// 分數公式: periods[i] * weights[i] * funding_rate[i]
             "periods": [3, 6, 9], //資金費率計算時間段 (小時)
             "weights": [3.0, 1.0, 2.0], //資金費率計算時間段權重
             "settlement_times_utc": ["00:00", "08:00", "16:00"], //資金費率結算時間 (UTC)
             "pre_settlement_minutes": 30 //資金費率結算前預留時間 (分鐘)
-        }
+        },
+        "position_scaling": true, // 是否啟用倉位縮放, 公式: 倉位大小 = 基礎倉位 * 縮放係數 * (1 + 資金費率)
+        "scaling_factor": 1.5, // 倉位縮放係數
+        "min_scaling_rate": 0.001, // 最小縮放費率閾值
+        "max_scaling_rate": 0.01 // 最大縮放費率閾值 
     },
     "top_pairs_count": 5 // 前幾名幣對
 }

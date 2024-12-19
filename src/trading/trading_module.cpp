@@ -7,6 +7,7 @@
 #include <chrono>
 #include <set>
 #include <fstream>
+#include <sstream>
 
 std::mutex TradingModule::mutex_;
 std::unique_ptr<TradingModule> TradingModule::instance;
@@ -51,9 +52,29 @@ double TradingModule::calculatePositionSize(const std::string& symbol, double ra
     double adjustedPosition = basePosition;
     if (config.getPositionScaling()) {
         double scalingFactor = config.getScalingFactor();
-        adjustedPosition = basePosition * (1 + std::abs(rate) * scalingFactor);
+        double minRate = config.getMinScalingRate();  // 新增最小縮放費率閾值
+        double maxRate = config.getMaxScalingRate();  // 新增最大縮放費率閾值
+        
+        // 將費率限制在合理範圍內
+        double normalizedRate = std::clamp(std::abs(rate), minRate, maxRate);
+        
+        // 使用對數函數進行平滑縮放
+        double scalingMultiplier = 1.0 + std::log1p(normalizedRate * scalingFactor);
+        
+        // 應用縮放
+        adjustedPosition = basePosition * scalingMultiplier;
+        
         // 限制最大倉位價值
         adjustedPosition = std::min(adjustedPosition, maxPositionValue);
+        
+        std::stringstream ss;
+        ss << "倉位調整詳情: "
+           << "原始倉位=" << basePosition
+           << ", 費率=" << rate
+           << ", 標準化費率=" << normalizedRate
+           << ", 縮放倍數=" << scalingMultiplier
+           << ", 調整後倉位=" << adjustedPosition;
+        logger.debug(ss.str());
     }
 
     // 計算數量並調整精度
@@ -239,12 +260,7 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
             logger.info("開始處理現有倉位...");
             handleExistingPositions(currentSymbols, topRates);
         }
-        
-        // // 4. 處理新建倉位
-        // if (!topRates.empty()) {
-        //     logger.info("開始處理新建倉位...");
-        //     handleNewPositions(topRates, positionSizes);
-        // }
+    
         
         // 5. 新建倉位並平衡現有倉位
         logger.info("開始平衡倉位...");
