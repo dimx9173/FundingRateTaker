@@ -44,8 +44,6 @@ private:
     double calculateAdjustedPosition(double basePosition, double rate);
     void updateUnsupportedSymbols(const std::string& symbol);
     std::map<std::string, std::pair<double, double>> getCurrentPositionSizes();
-    void handleNewPositions(const std::vector<std::pair<std::string, double>>& topRates,
-                            const std::map<std::string, std::pair<double, double>>& positionSizes);
     void handleExistingPositions(const std::vector<std::string>& currentSymbols,
                                 const std::vector<std::pair<std::string, double>>& topRates);
     void balancePositions(const std::vector<std::pair<std::string, double>>& topRates,
@@ -58,6 +56,13 @@ private:
     double calculateRebalanceCost(const std::string& symbol, double size);
     double calculateExpectedProfit(double size, double fundingRate);
     bool createSpotOrderIncludeFee(const std::string& symbol, const std::string& side, double qty);
+    bool executeHedgePosition(
+        const std::string& symbol,
+        double targetValue,
+        const BalanceCheckResult& balanceCheck,
+        std::map<std::string, std::pair<double, double>>& positionSizes);
+    double calculateTotalPositionValue(
+        const std::map<std::string, std::pair<double, double>>& positionSizes);
 public:
     static TradingModule& getInstance(IExchange& exchange);
     std::vector<std::pair<std::string, double>> getTopFundingRates();

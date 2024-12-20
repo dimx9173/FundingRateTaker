@@ -261,8 +261,7 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
             handleExistingPositions(currentSymbols, topRates);
         }
     
-        
-        // 5. 新建倉位並平衡現有倉位
+        // 4. 新建倉位並平衡現有倉位
         logger.info("開始平衡倉位...");
         balancePositions(topRates, positionSizes);
         
@@ -583,63 +582,6 @@ std::map<std::string, std::pair<double, double>> TradingModule::getCurrentPositi
     return positionSizes;
 }
 
-// 處理新建倉位
-void TradingModule::handleNewPositions(
-    const std::vector<std::pair<std::string, double>>& topRates,
-    const std::map<std::string, std::pair<double, double>>& positionSizes) {
-    
-    for (const auto& [symbol, rate] : topRates) {
-        // 檢查是否已有倉位
-        if (positionSizes.find(symbol) != positionSizes.end()) {
-            logger.info("已有倉位: " + symbol);
-            continue;
-        }
-        
-        // 計算倉位大小
-        double positionSize = calculatePositionSize(symbol, rate);
-        if (positionSize <= 0) continue;
-        
-        // 獲取當前價格
-        double spotPrice = exchange.getSpotPrice(symbol);
-        if (spotPrice <= 0) continue;
-        
-        // 計算數量
-        double quantity = positionSize / spotPrice;
-        quantity = adjustSpotPrecision(quantity, symbol);
-        
-        // 檢查最小訂單量
-        if (quantity < getMinOrderSize(symbol)) {
-            logger.info("數量小於最小訂單量: " + symbol);
-            continue;
-        }
-        
-        logger.info("開始建立新對衝倉位: " + symbol);
-        logger.info("倉位大小: " + std::to_string(positionSize) + " USDT");
-        logger.info("數量: " + std::to_string(quantity));
-        
-        // 建立現貨多倉
-        bool spotSuccess = createSpotOrderIncludeFee(symbol, "Buy", quantity);
-        if (!spotSuccess) {
-            handleError(symbol, exchange.getLastError());
-            continue;
-        }
-        
-        // 等待現貨訂單完成
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        
-        // 建立合約空倉
-        Json::Value result = exchange.createOrder(symbol, "Sell", quantity, "linear", "MARKET");
-        if (result["retCode"].asInt() != 0) {
-            handleError(symbol, result["retMsg"].asString());
-            // 回滾現貨交易
-            exchange.createSpotOrder(symbol, "Sell", quantity);
-            continue;
-        }
-        
-        logger.info("成功建立對衝倉位: " + symbol);
-    }
-}
-
 // 處理現有倉位
 void TradingModule::handleExistingPositions(
     const std::vector<std::string>& currentSymbols,
@@ -687,121 +629,169 @@ void TradingModule::balancePositions(
     const std::vector<std::pair<std::string, double>>& topRates,
     std::map<std::string, std::pair<double, double>>& positionSizes) {
     
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    if (topRates.empty()) {
+        logger.warning("��交易需要平衡");
+        return;
+    }
+    
+    // 獲取配置參數
+    const Config& config = Config::getInstance();
+    const double minPositionValue = config.getMinPositionValue();
+    const double maxPositionValue = config.getMaxPositionValue();
+    const auto& unsupportedSymbols = config.getUnsupportedSymbols();
+    
+    // 獲取賬戶狀態
+    double equity = exchange.getTotalEquity();
+    if (equity <= 0) {
+        logger.error("無法獲取賬戶權益或權益不足");
+        return;
+    }
+    
+    // 計算當前總倉位價值
+    double totalPositionValue = calculateTotalPositionValue(positionSizes);
+    logger.info("當前總倉位價值: " + std::to_string(totalPositionValue) + " USDT");
+    
     for (const auto& [symbol, rate] : topRates) {
-        logger.info("------開始平衡對衝合約現貨組合: " + symbol);
-        auto it = positionSizes.find(symbol);
-        if (it == positionSizes.end()) continue;
-        
-        double spotSize = it->second.first;
-        double contractSize = it->second.second;
-        
-        // 檢查對衝合約現貨組合平衡資訊
-        auto balanceCheck = checkPositionBalance(symbol, spotSize, contractSize);
-        
-        if (!balanceCheck.needBalance) {
-            logger.info(symbol + " 無需重平衡: " +
-                       "價差=" + std::to_string(balanceCheck.priceDiff * 100) + "%, " +
-                       "深度影響=" + std::to_string(balanceCheck.depthImpact * 100) + "%, " +
-                       "預期成本=" + std::to_string(balanceCheck.estimatedCost) + " USDT, " +
-                       "預期收益=" + std::to_string(balanceCheck.expectedProfit) + " USDT");
+        try {
+            if (isNearSettlement() || 
+                std::find(unsupportedSymbols.begin(), unsupportedSymbols.end(), symbol) 
+                != unsupportedSymbols.end()) {
+                continue;
+            }
+            
+            // 檢查現有倉位並獲取平衡結果
+            auto it = positionSizes.find(symbol);
+            double existingSpotSize = (it != positionSizes.end()) ? it->second.first : 0.0;
+            double existingContractSize = (it != positionSizes.end()) ? it->second.second : 0.0;
+            
+            auto balanceCheck = checkPositionBalance(symbol, existingSpotSize, existingContractSize);
+            
+            // 如果不需要平衡，跳過
+            if (!balanceCheck.needBalance) {
+                continue;
+            }
+            
+            // 計算新的目標倉位
+            double targetValue = calculatePositionSize(symbol, rate);
+            if (targetValue <= 0 || targetValue < minPositionValue || 
+                targetValue > maxPositionValue) {
+                continue;
+            }
+            
+            // 檢查總倉位限制
+            if (totalPositionValue + targetValue > equity * config.getDefaultLeverage()) {
+                logger.warning("總倉位價值將超過最大槓桿限制，跳過 " + symbol);
+                continue;
+            }
+            
+            // 執行平衡操作
+            if (executeHedgePosition(symbol, targetValue, balanceCheck, positionSizes)) {
+                totalPositionValue += targetValue;
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+            }
+            
+        } catch (const std::exception& e) {
+            logger.error("處理 " + symbol + " 時發生錯誤: " + std::string(e.what()));
             continue;
         }
-        logger.info("------需要重平衡: " + symbol);
+    }
+    
+    logger.info("倉位平衡完成，最新總倉位價值: " + 
+                std::to_string(totalPositionValue) + " USDT (" + 
+                std::to_string(totalPositionValue / equity * 100) + "% 槓桿率)");
+}
 
-        // 執行重平衡邏輯
-        //1.確認現貨倉位價值是否介於 min_position_value/2 和 max_position_value/2 之間
-        //不足需先買入，超過需先賣出
-        const Config& config = Config::getInstance();
-        double maxPositionValue = config.getMaxPositionValue();
-        double minPositionValue = config.getMinPositionValue();
-        spotSize = exchange.getSpotBalance(symbol);
-
-        double spotPrice = exchange.getSpotPrice(symbol);
-        double spotValue = spotSize * spotPrice;
-        if (spotValue < minPositionValue / 2 || spotValue > maxPositionValue / 2) {
-            logger.info("現貨倉位價值: " + std::to_string(spotValue) + " USDT, 需要重平衡");
-            if (spotValue < minPositionValue / 2) {
-                double needBuySize = adjustSpotPrecision((minPositionValue / 2 - spotValue) / spotPrice, symbol);
-                logger.info("現貨倉位價值不足,需補足: " + std::to_string(needBuySize) + " " + symbol);
-                bool sizeDiffValid = needBuySize >= getMinOrderSize(symbol);//倉位差異是否大於最小訂單量
-                if (sizeDiffValid) {
-                    bool spotSuccess = createSpotOrderIncludeFee(symbol, "Buy", needBuySize);
-                    if (!spotSuccess) {
-                        logger.error("重平衡現貨倉位失敗: " + symbol);
-                        continue;
-                    }
-                } else {
-                    logger.info("現貨倉位價值不足,但訂單量不足,不用補足");
-                }
-            } else if (spotValue > maxPositionValue / 2) {
-                double needSellSize = adjustSpotPrecision((spotValue - maxPositionValue / 2) / spotPrice, symbol);
-                logger.info("現貨倉位價值超過,需賣出: " + std::to_string(needSellSize) + " " + symbol);
-                bool sizeDiffValid = needSellSize >= getMinOrderSize(symbol);//倉位差異是否大於最小訂單量
-                if (sizeDiffValid) {
-                    bool spotSuccess = exchange.createSpotOrder(symbol, "Sell", needSellSize);
-                    if (!spotSuccess) {
-                        logger.error("重平衡現貨倉位失敗: " + symbol);
-                        continue;
-                    }
-                } else {
-                    logger.info("現貨倉位價值超過,但訂單量不足,不用賣出");
-                }
-            }
+bool TradingModule::executeHedgePosition(
+    const std::string& symbol,
+    double targetValue,
+    const BalanceCheckResult& balanceCheck,
+    std::map<std::string, std::pair<double, double>>& positionSizes) {
+    
+    try {
+        // 1. 檢查是否需要平衡
+        if (!balanceCheck.needBalance) {
+            logger.info(symbol + " 無需平衡倉位");
+            return true;
         }
-        //現貨倉位更新
-        spotSize = exchange.getSpotBalance(symbol);
-        //2.確認對衝合約現貨組合倉位差異是否平衡，不足需平衡
-        double sizeDiff = std::abs(spotSize - contractSize);//倉位差異
-        bool sizeDiffValid = sizeDiff >= getMinOrderSize(symbol);//倉位差異是否大於最小訂單量
-        sizeDiff = adjustContractPrecision(sizeDiff, symbol);//調整精度
-        logger.info("倉位差異: " + std::to_string(sizeDiff) + " " + symbol);
-        if (sizeDiffValid) {
-            // 由於現貨倉位已經平衡，所以只需要平衡合約倉位
-            // 判斷哪個需要增加倉位
-            if (spotSize < contractSize) {
-                // 現貨倉位較小,需要減少合約
-                logger.info("減少合約空倉: " + std::to_string(sizeDiff) + " " + symbol);
-                Json::Value result = exchange.createOrder(
-                    symbol, "Buy", sizeDiff, "linear", "MARKET"
-                );
-                if (result["retCode"].asInt() != 0) {
-                    logger.error("重平衡合約倉位失敗: " + symbol);
-                    continue;
-                }
-            } else {
-                // 現貨倉位較大,需要增加合約
-                logger.info("增加合約空倉: " + std::to_string(sizeDiff) + " " + symbol);
-                Json::Value result = exchange.createOrder(
-                    symbol, "Sell", sizeDiff, "linear", "MARKET"
-                );
-                if (result["retCode"].asInt() != 0) {
-                    logger.error("重平衡合約倉位失敗: " + symbol);
-                    continue;
+
+        // 2. 獲取當前價格
+        double currentPrice = exchange.getSpotPrice(symbol);
+        if (currentPrice <= 0) {
+            logger.error("無法獲取 " + symbol + " 價格");
+            return false;
+        }
+        
+        // 3. 計算目標數量並調整精度
+        double targetQuantity = adjustSpotPrecision(targetValue / currentPrice, symbol);
+        
+        // 4. 檢查最小訂單要求
+        if (targetQuantity < getMinOrderSize(symbol)) {
+            logger.info(symbol + " 數量小於最小訂單要求");
+            return false;
+        }
+        
+        // 5. 關閉現有倉位
+        auto it = positionSizes.find(symbol);
+        if (it != positionSizes.end()) {
+            if (it->second.first > 0) {
+                double spotCloseQty = adjustSpotPrecision(it->second.first, symbol);
+                bool spotCloseSuccess = exchange.createSpotOrder(
+                    symbol, "Sell", spotCloseQty);
+                if (!spotCloseSuccess) {
+                    logger.error("關閉現有現貨倉位失敗: " + symbol);
+                    return false;
                 }
             }
             
-            // 等待訂單執行
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            
-            // 驗證重平衡結果
-            auto newPositions = getCurrentPositionSizes();
-            auto newIt = newPositions.find(symbol);
-            if (newIt != newPositions.end()) {
-                double newSpotSize = newIt->second.first;
-                double newContractSize = newIt->second.second;
-                double newSizeDiff = std::abs(newSpotSize - newContractSize);
-                
-                if (newSizeDiff > sizeDiff * 0.001) {
-                    logger.warning(symbol + " 重平衡後倉位仍不對等: " +
-                                 "現貨=" + std::to_string(newSpotSize) + 
-                                 ", 合約=" + std::to_string(newContractSize));
-                } else {
-                    logger.info(symbol + " 重平衡成功");
+            if (it->second.second > 0) {
+                double contractCloseQty = adjustContractPrecision(it->second.second, symbol);
+                Json::Value result = exchange.createOrder(
+                    symbol, "Buy", contractCloseQty, "linear", "MARKET");
+                if (result["retCode"].asInt() != 0) {
+                    logger.error("關閉現有合約倉位失敗: " + symbol);
+                    return false;
                 }
             }
-        } else {
-            logger.info(symbol + " 倉位差異不足,無需重平衡");
+            
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
+        
+        // 6. 建立新倉位
+        bool spotSuccess = createSpotOrderIncludeFee(symbol, "Buy", targetQuantity);
+        if (!spotSuccess) {
+            logger.error("建立現貨倉位失敗: " + symbol);
+            return false;
+        }
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        
+        double contractQty = adjustContractPrecision(targetQuantity, symbol);
+        Json::Value result = exchange.createOrder(
+            symbol, "Sell", contractQty, "linear", "MARKET"
+        );
+        
+        if (result["retCode"].asInt() != 0) {
+            logger.error("建立合約倉位失敗: " + symbol);
+            exchange.createSpotOrder(symbol, "Sell", targetQuantity);
+            return false;
+        }
+        
+        // 7. 更新倉位記錄
+        positionSizes[symbol] = std::make_pair(targetQuantity, contractQty);
+        
+        logger.info(symbol + " 對衝交易完成: " +
+                   "現貨=" + std::to_string(targetQuantity) +
+                   ", 合約=" + std::to_string(contractQty) +
+                   ", 價差=" + std::to_string(balanceCheck.priceDiff * 100) + "%" +
+                   ", 預期收益=" + std::to_string(balanceCheck.expectedProfit) + " USDT");
+                   
+        return true;
+        
+    } catch (const std::exception& e) {
+        logger.error("執行對衝交易時發生錯誤: " + std::string(e.what()));
+        return false;
     }
 }
 
@@ -851,7 +841,7 @@ TradingModule::BalanceCheckResult TradingModule::checkPositionBalance(const std:
                  std::to_string(pairValue) + " USDT (對衝合約現貨組合)");
     logger.info("倉位價值在範圍內: " + std::string(valueInRange ? "是" : "否"));
     
-    // 4. 計算價格差異
+    // 4. 計算價格差
     result.priceDiff = std::abs(spotPrice - contractPrice) / spotPrice;
     logger.info("價格差異: " + std::to_string(result.priceDiff * 100) + "%");
     
@@ -878,7 +868,7 @@ TradingModule::BalanceCheckResult TradingModule::checkPositionBalance(const std:
     
     // 需要重平衡的條件：
     // 1. 倉位數量不對等 或 倉位價值不在允許範圍內
-    // 2. 價格差異在可接受範圍內
+    // 2. 價格異在可接受範圍內
     // 3. 深度影響在可接受範圍內
     // 4. 預期收益大於成本的2倍
     result.needBalance = 
@@ -895,7 +885,7 @@ TradingModule::BalanceCheckResult TradingModule::checkPositionBalance(const std:
                " (" + std::to_string(contractValue) + " USDT)");
     logger.info("- 倉位數量對等: " + std::string(sizeBalanced ? "是" : "否") + 
                " (差異: " + std::to_string(sizeDiff) + ")");
-    logger.info("- 倉位價值在範圍內: " + std::string(valueInRange ? "是" : "否") + 
+    logger.info("- 倉位��值在範圍內: " + std::string(valueInRange ? "是" : "否") + 
                " [" + std::to_string(minPositionValue) + "," + 
                std::to_string(maxPositionValue) + "]");
     logger.info("- 價格差異: " + std::to_string(result.priceDiff * 100) + "%");
@@ -1014,4 +1004,21 @@ bool TradingModule::createSpotOrderIncludeFee(const std::string& symbol, const s
     qty = adjustSpotPrecision(qty, symbol);
     logger.info("實際現貨含手續費下單倉位: " + std::to_string(qty) + " " + symbol);
     return exchange.createSpotOrder(symbol, side, qty);
+}
+
+double TradingModule::calculateTotalPositionValue(
+    const std::map<std::string, std::pair<double, double>>& positionSizes) {
+    
+    double totalValue = 0.0;
+    
+    for (const auto& [symbol, sizes] : positionSizes) {
+        double spotPrice = exchange.getSpotPrice(symbol);
+        if (spotPrice > 0) {
+            double spotValue = sizes.first * spotPrice;
+            double contractValue = sizes.second * spotPrice;
+            totalValue += (spotValue + contractValue);
+        }
+    }
+    
+    return totalValue;
 }
