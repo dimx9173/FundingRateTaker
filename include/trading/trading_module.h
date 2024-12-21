@@ -18,7 +18,8 @@ private:
     IExchange& exchange;
     SQLiteStorage& storage;
     Logger logger;
-
+ std::vector<std::pair<std::string, double>> cachedFundingRates;
+    std::chrono::system_clock::time_point lastFundingUpdate;
     TradingModule(IExchange& exchange);
     struct BalanceCheckResult {
         bool needBalance;
@@ -44,7 +45,7 @@ private:
     double calculateAdjustedPosition(double basePosition, double rate);
     void updateUnsupportedSymbols(const std::string& symbol);
     std::map<std::string, std::pair<double, double>> getCurrentPositionSizes();
-    void handleExistingPositions(const std::vector<std::string>& currentSymbols,
+    void handleExistingPositions(std::map<std::string, std::pair<double, double>>& positionSizes,
                                 const std::vector<std::pair<std::string, double>>& topRates);
     void balancePositions(const std::vector<std::pair<std::string, double>>& topRates,
                           std::map<std::string, std::pair<double, double>>& positionSizes);
@@ -53,7 +54,7 @@ private:
                                           double spotSize, 
                                           double contractSize);
     double calculateDepthImpact(const Json::Value& orderbook, double size);
-    double calculateRebalanceCost(const std::string& symbol, double size);
+    double calculateRebalanceCost(const std::string& symbol, double size, bool isSpot, const Json::Value& orderbook);
     double calculateExpectedProfit(double size, double fundingRate);
     bool createSpotOrderIncludeFee(const std::string& symbol, const std::string& side, double qty);
     bool executeHedgePosition(
@@ -62,15 +63,17 @@ private:
         const BalanceCheckResult& balanceCheck,
         std::map<std::string, std::pair<double, double>>& positionSizes);
     double calculateTotalPositionValue(
-        const std::map<std::string, std::pair<double, double>>& symbolSizes,
-        const std::map<std::string, std::pair<double, double>>& symbolPrices);
-    double calculateTotalPositionValue(
-        const std::map<std::string, std::pair<double, double>>& symbolSizes);
+        const std::map<std::string, std::pair<double, double>>& positions,
+        bool positionsIsSize,
+        const std::map<std::string, std::pair<double, double>>* prices);
+    std::vector<std::string> getSymbolsByCMC(int topCount);
+    static size_t writeCallback(void* contents, size_t size, size_t nmemb, void* userp);
+    void displayPositionSizes(const std::map<std::string, std::pair<double, double>>& positionSizes);
 public:
     static TradingModule& getInstance(IExchange& exchange);
     std::vector<std::pair<std::string, double>> getTopFundingRates();
     void closeTradeGroup(const std::string& group);
-    void executeHedgeStrategy(const std::vector<std::pair<std::string, double>>& topRates);
+    void executeHedgeStrategy();
     static void resetInstance() {
         std::lock_guard<std::mutex> lock(mutex_);
         instance.reset();

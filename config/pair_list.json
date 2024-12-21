@@ -1,21 +1,10 @@
 {
     "pair_list": [
-        "XRPUSDT",
-        "SOLUSDT",
-        "BNBUSDT",
-        "DOGEUSDT",
-        "ADAUSDT",
-        "TRXUSDT",
-        "AVAXUSDT",
-        "LINKUSDT",
-        "SHIBUSDT",
-        "TONUSDT",
-        "DOTUSDT",
-        "SUIUSDT",
-        "XLMUSDT"
     ],
     "unsupported_symbols": [
-        "SUIUSDT",
-        "USDTUSDT"
+        "USDTUSDT",
+        "USDCUSDT",
+        "DAIUSDT",
+        "BUSDUSDT"
     ]
 }

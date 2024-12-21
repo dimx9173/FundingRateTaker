@@ -12,6 +12,8 @@
         }
     },
     "trading": {
+        // 是否支持反向現貨合約資金費率, 即空付多收，借現貨賣做多合約（反向合約資金費率 = 現貨資金費率 * -1）
+        "reverse_contract_funding_rate": false,
         "min_position_value": 100, //最小倉位價值 (USDT)
         "max_position_value": 200, //最大倉位價值 (USDT)
         "check_interval_minutes": 5, //檢查間隔時間 (分鐘)
@@ -26,7 +28,11 @@
         "position_scaling": true, // 是否啟用倉位縮放, 公式: 倉位大小 = 基礎倉位 * 縮放係數 * (1 + 資金費率)
         "scaling_factor": 1.5, // 倉位縮放係數
         "min_scaling_rate": 0.001, // 最小縮放費率閾值
-        "max_scaling_rate": 0.01 // 最大縮放費率閾值 
+        "max_scaling_rate": 0.01, // 最大縮放費率閾值 
+        "use_coin_market_cap": true, // 是否使用CoinMarketCap API
+        "cmc_api_key": "your_api_key_here", // CoinMarketCap API key
+        "cmc_top_count": 50, // CoinMarketCap API 前幾名幣種
+        "cmc_sort_by": "volume_7d" // CoinMarketCap API 排序依據 ref: https://coinmarketcap.com/api/documentation/v1/#operation/getV1CryptocurrencyListingsLatest
     },
     "top_pairs_count": 5 // 前幾名幣對
 }

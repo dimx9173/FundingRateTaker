@@ -73,9 +73,8 @@ void scheduleTask() {
         try {
             IExchange& exchange = ExchangeFactory::createExchange();
             auto& trader = TradingModule::getInstance(exchange);
-            auto topRates = trader.getTopFundingRates(); 
             trader.displayPositions();
-            trader.executeHedgeStrategy(topRates); 
+            trader.executeHedgeStrategy(); 
             trader.displayPositions();
             logger.info("對沖策略執行完成");
         } catch (const std::exception& e) {

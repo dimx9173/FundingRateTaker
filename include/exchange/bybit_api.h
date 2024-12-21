@@ -42,9 +42,11 @@ public:
     Json::Value getSpotBalances() override;
     double getSpotBalance(const std::string& symbol) override;
     std::string getLastError() override;
-    std::vector<std::pair<std::string, std::vector<double>>> getFundingHistory() override;
+    std::vector<std::pair<std::string, std::vector<double>>> getFundingHistory(
+        const std::vector<std::string>& symbols = {}) override;
     double getContractPrice(const std::string& symbol) override;
-    Json::Value getOrderBook(const std::string& symbol) override;
+    Json::Value getSpotOrderBook(const std::string& symbol) override;
+    Json::Value getContractOrderBook(const std::string& symbol) override;
     double getCurrentFundingRate(const std::string& symbol) override;
     double getSpotFeeRate() override;
     double getContractFeeRate() override;

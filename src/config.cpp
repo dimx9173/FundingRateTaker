@@ -155,3 +155,23 @@ double Config::getMaxScalingRate() const {
 int Config::getFundingHoldingDays() const {
     return config["trading"]["funding_holding_days"].asInt();
 }
+
+bool Config::getUseCoinMarketCap() const {
+    return config["trading"]["use_coin_market_cap"].asBool();
+}
+
+std::string Config::getCMCApiKey() const {
+    return config["trading"]["cmc_api_key"].asString();
+}
+
+std::string Config::getCMCSortBy() const {
+    return config["trading"]["cmc_sort_by"].asString();
+}
+
+int Config::getCMCTopCount() const {
+    return config["trading"]["cmc_top_count"].asInt();
+}
+
+bool Config::getReverseContractFundingRate() const {
+    return config["trading"]["reverse_contract_funding_rate"].asBool();
+}

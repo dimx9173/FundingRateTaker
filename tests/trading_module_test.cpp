@@ -22,36 +22,22 @@ public:
     MOCK_METHOD1(closePosition, void(const std::string&));
     MOCK_METHOD1(getInstruments, std::vector<std::string>(const std::string&));
     MOCK_METHOD0(getLastError, std::string());
-    MOCK_METHOD0(getFundingHistory, std::vector<std::pair<std::string, std::vector<double>>>());
     
+
     // Mock 方法的具體實現
     MOCK_METHOD0(displayPositions, void());
     MOCK_METHOD0(getSpotBalances, Json::Value());
     MOCK_METHOD1(getSpotBalance, double(const std::string&));
     MOCK_METHOD1(getMarginRatio, double(const std::string&));
-    // 新增方法實現
-    double getContractPrice(const std::string& symbol) override {
-        return 100.0; // 模擬價格
-    }
+    MOCK_METHOD1(getSpotOrderBook, Json::Value(const std::string&));
+    MOCK_METHOD1(getContractOrderBook, Json::Value(const std::string&));
+    MOCK_METHOD1(getContractPrice, double(const std::string&));
+    MOCK_METHOD1(getCurrentFundingRate, double(const std::string&));
+    MOCK_METHOD0(getSpotFeeRate, double());
+    MOCK_METHOD0(getContractFeeRate, double());
     
-    Json::Value getOrderBook(const std::string& symbol) override {
-        Json::Value orderbook;
-        orderbook["asks"][0][0] = "100.0";
-        orderbook["asks"][0][1] = "1.0";
-        return orderbook;
-    }
-    
-    double getCurrentFundingRate(const std::string& symbol) override {
-        return 0.001; // 模擬資金費率
-    }
-    
-    double getSpotFeeRate() override {
-        return 0.001; // 模擬現貨手續費率
-    }
-    
-    double getContractFeeRate() override {
-        return 0.0006; // 模擬合約手續費率
-    }
+    MOCK_METHOD1(getFundingHistory, 
+        std::vector<std::pair<std::string, std::vector<double>>>(const std::vector<std::string>&));
 };
 
 class TradingModuleTest : public ::testing::Test {
@@ -89,9 +75,6 @@ TEST_F(TradingModuleTest, GetTopFundingRates) {
         {"ETHUSDT", {0.002, 0.001, 0.003}},
         {"BTCUSDT", {0.001, 0.002, 0.001}}
     };
-    
-    EXPECT_CALL(*mockExchange, getFundingHistory())
-        .WillOnce(::testing::Return(mockHistoricalRates));
     
     auto& trader = TradingModule::getInstance(*mockExchange);
     auto rates = trader.getTopFundingRates();

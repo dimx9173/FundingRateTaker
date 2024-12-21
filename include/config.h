@@ -30,6 +30,11 @@ public:
     bool isSpotMarginTradingEnabled() const;
     
     // 資金費率相關配置
+    bool getReverseContractFundingRate() const;
+    bool getUseCoinMarketCap() const;
+    std::string getCMCApiKey() const;
+    int getCMCTopCount() const;
+    std::string getCMCSortBy() const;
     std::vector<std::string> getSettlementTimesUTC() const;
     int getPreSettlementMinutes() const;
     std::vector<int> getFundingPeriods() const;

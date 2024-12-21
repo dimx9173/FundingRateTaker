@@ -33,9 +33,11 @@ public:
     // 新方法
     virtual Json::Value getSpotBalances() = 0;
     virtual double getSpotBalance(const std::string& symbol) = 0;
-    virtual std::vector<std::pair<std::string, std::vector<double>>> getFundingHistory() = 0;
+    virtual std::vector<std::pair<std::string, std::vector<double>>> getFundingHistory(
+        const std::vector<std::string>& symbols = {}) = 0;
     virtual double getContractPrice(const std::string& symbol) = 0;
-    virtual Json::Value getOrderBook(const std::string& symbol) = 0;
+    virtual Json::Value getSpotOrderBook(const std::string& symbol) = 0;
+    virtual Json::Value getContractOrderBook(const std::string& symbol) = 0;
     virtual double getCurrentFundingRate(const std::string& symbol) = 0;
     virtual double getSpotFeeRate() = 0;
     virtual double getContractFeeRate() = 0;

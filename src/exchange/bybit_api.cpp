@@ -215,19 +215,20 @@ std::vector<std::pair<std::string, double>> BybitAPI::getFundingRates() {
     return rates;
 }
 
-std::vector<std::pair<std::string, std::vector<double>>> BybitAPI::getFundingHistory() {
+std::vector<std::pair<std::string, std::vector<double>>> BybitAPI::getFundingHistory(
+    const std::vector<std::string>& targetSymbols) {
+    
     std::vector<std::pair<std::string, std::vector<double>>> rates;
-    auto pairs = Config::getInstance().getTradingPairs();
+    
     int historyDays = Config::getInstance().getFundingHistoryDays();
-    
     Logger logger;
-    logger.info("開始獲取資金費率歷史數據");
+    logger.info("開始獲取資金費率歷史數據,"+std::to_string(targetSymbols.size()));
     
-    for (const auto& symbol : pairs) {
+    for (const auto& symbol : targetSymbols) {
         std::map<std::string, std::string> params;
         params["symbol"] = symbol;
         params["category"] = "linear";
-        params["limit"] = std::to_string(historyDays * 3); // 每天3次資金費率
+        params["limit"] = std::to_string(historyDays * 3);
         
         try {
             Json::Value response = makeRequest("/v5/market/funding/history", "GET", params);
@@ -480,10 +481,10 @@ double BybitAPI::getContractPrice(const std::string& symbol) {
 }
 
 // 獲取訂單簿
-Json::Value BybitAPI::getOrderBook(const std::string& symbol) {
+Json::Value BybitAPI::getSpotOrderBook(const std::string& symbol) {
     std::map<std::string, std::string> params;
     params["symbol"] = symbol;
-    params["category"] = "linear";
+    params["category"] = "spot";
     params["limit"] = "50";  // 獲取前50層深度
     
     Json::Value response = makeRequest("/v5/market/orderbook", "GET", params);
@@ -492,6 +493,19 @@ Json::Value BybitAPI::getOrderBook(const std::string& symbol) {
     // Logger logger;
     // logger.info("訂單簿原始數據: " + Json::FastWriter().write(response));
     
+    return response;
+}
+
+Json::Value BybitAPI::getContractOrderBook(const std::string& symbol) {
+    std::map<std::string, std::string> params;
+    params["symbol"] = symbol;
+    params["category"] = "linear";
+    params["limit"] = "50";  // 獲取前50層深度
+    
+    Json::Value response = makeRequest("/v5/market/orderbook", "GET", params);
+        // 添加日誌輸出查看數據
+    // Logger logger;
+    // logger.info("訂單簿原始數據: " + Json::FastWriter().write(response));
     return response;
 }
 

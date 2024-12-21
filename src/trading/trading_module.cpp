@@ -8,6 +8,7 @@
 #include <set>
 #include <fstream>
 #include <sstream>
+#include <curl/curl.h>
 
 std::mutex TradingModule::mutex_;
 std::unique_ptr<TradingModule> TradingModule::instance;
@@ -81,7 +82,7 @@ double TradingModule::calculatePositionSize(const std::string& symbol, double ra
     double quantity = adjustedPosition / currentPrice;
     quantity = adjustSpotPrecision(quantity, symbol);
     
-    // 確保最終倉位價值不小於最小要求
+    // 確保最終倉位價值小於最小要求
     double finalValue = quantity * currentPrice;
     if (finalValue < minPositionValue) {
         return 0.0;  // 放棄該交易
@@ -91,14 +92,43 @@ double TradingModule::calculatePositionSize(const std::string& symbol, double ra
 }
 
 std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() {
-    if (isNearSettlement()) {
-        logger.info("接近結算時間，重新計算資金費率...");
+    // 檢查是否需要更新資金費率
+    bool needUpdate = cachedFundingRates.empty() || isNearSettlement();
+    
+    if (!needUpdate) {
+        logger.info("使用緩存的資金費率數據");
+        return cachedFundingRates;
     }
     
-    // 將 vector 轉換為 set 以便快速查找
-    auto unsupportedList = Config::getInstance().getUnsupportedSymbols();
-    std::set<std::string> unsupportedSymbols(unsupportedList.begin(), unsupportedList.end());
+    logger.info("重新獲取資金費率數據...");
     
+    int topCount = Config::getInstance().getTopPairsCount();
+    
+    const Config& config = Config::getInstance();
+    bool useCoinMarketCap = config.getUseCoinMarketCap();
+    int cmcTopCount = config.getCMCTopCount();
+    std::vector<std::string> symbols;
+    
+    if (useCoinMarketCap) {
+        //使用CMC的幣種 
+        symbols = getSymbolsByCMC(cmcTopCount);
+    } else {
+        //使用配置中的所有交易對
+        symbols = config.getTradingPairs();
+    }
+    
+    
+    // 獲取不支持的交易對, 並從symbols中移除
+    auto unsupportedList = config.getUnsupportedSymbols();
+    std::set<std::string> unsupportedSymbols(unsupportedList.begin(), unsupportedList.end());
+    symbols.erase(std::remove_if(symbols.begin(), symbols.end(),
+        [&unsupportedSymbols](const std::string& symbol) {
+            return unsupportedSymbols.find(symbol) != unsupportedSymbols.end();
+        }), symbols.end());
+    
+    //移除重複
+    symbols.erase(std::unique(symbols.begin(), symbols.end()), symbols.end());
+
     // 獲取配置參數
     auto periods = Config::getInstance().getFundingPeriods();  // [a, b, c]
     auto weights = Config::getInstance().getFundingWeights();  // [o, p, q]
@@ -111,7 +141,7 @@ std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() 
     // 獲取資金費率數據
     std::vector<std::pair<std::string, std::vector<double>>> historicalRates;
     try {
-        historicalRates = exchange.getFundingHistory();
+        historicalRates = exchange.getFundingHistory(symbols);
         if (historicalRates.empty()) {
             logger.warning("沒有獲取到任何資金費率數據");
             return {};
@@ -121,9 +151,12 @@ std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() 
         return {};
     }
     
+    
+    
     // 計算加權分數
     std::vector<std::pair<std::string, double>> weightedRates;
     for (const auto& [symbol, rates] : historicalRates) {
+
         if (unsupportedSymbols.find(symbol) != unsupportedSymbols.end()) {
             logger.info("跳過不支持的交易對: " + symbol);
             continue;
@@ -132,6 +165,14 @@ std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() 
         if (rates.empty()) {
             logger.warning("無效的資金費率數據: " + symbol);
             continue;
+        }
+
+        // 是否支援反向現貨合約資金費率, 即空付多收，借現貨賣做多合約（反向合約資金費率 = 現貨資金費率 * -1）
+        if (!config.getReverseContractFundingRate()) {
+            if (rates[0] < 0) {
+                logger.info("不支援反向現貨合約資金費率，跳過資金費率為負值的幣種: " + symbol);
+                continue;
+            }
         }
         
         double weightedScore = 0.0;
@@ -157,6 +198,11 @@ std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() 
         
         if (totalWeight > 0) {
             double finalScore = weightedScore / totalWeight;
+            // 檢查最新資金費率是否與finalScore相反
+            if (rates.empty() || rates[0] * finalScore < 0) {
+                logger.info("跳過資金費率與最後一個週期相反的幣種: " + symbol);
+                continue;
+            }
             weightedRates.emplace_back(symbol, finalScore);
         }
     }
@@ -173,7 +219,6 @@ std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() 
         });
     
     // 只保留前N個交易對
-    int topCount = Config::getInstance().getTopPairsCount();
     if (topCount > 0 && weightedRates.size() > static_cast<size_t>(topCount)) {
         weightedRates.resize(topCount);
     }
@@ -226,7 +271,11 @@ std::vector<std::pair<std::string, double>> TradingModule::getTopFundingRates() 
     }
     std::cout << std::endl;
     
-    return weightedRates;
+    // 更新緩存
+    cachedFundingRates = weightedRates;
+    lastFundingUpdate = std::chrono::system_clock::now();
+    
+    return cachedFundingRates;
 }
 
 void TradingModule::closeTradeGroup(const std::string& group) {
@@ -237,16 +286,14 @@ void TradingModule::closeTradeGroup(const std::string& group) {
     }
 }
 
-void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string, double>>& topRates) {
-    logger.info("開始執行對衝策略...");
-    
-    // 1. 檢查是否接近結算時間
-    if (isNearSettlement()) {
-        logger.info("接近結算時間，需重新取得資金費率");
-        // return;
-    }
-    
+void TradingModule::executeHedgeStrategy() {
     try {
+
+        // 1. 獲取資金費率
+        auto topRates = getTopFundingRates(); 
+
+        logger.info("開始執行對衝策略...");
+
         // 2. 獲取當前倉位狀態
         auto positionSizes = getCurrentPositionSizes();
         if (positionSizes.empty()) {
@@ -255,10 +302,10 @@ void TradingModule::executeHedgeStrategy(const std::vector<std::pair<std::string
         }
         
         // 3. 關閉不在topRates的現有倉位
-        auto currentSymbols = getCurrentPositionSymbols();
-        if (!currentSymbols.empty()) {
+        if (!positionSizes.empty()) {
             logger.info("開始關閉不在topRates的現有倉位");
-            handleExistingPositions(currentSymbols, topRates);
+            handleExistingPositions(positionSizes, topRates);
+            displayPositionSizes(positionSizes);
         }
     
         // 4. 新建倉位並平衡現有倉位
@@ -279,20 +326,24 @@ bool TradingModule::isNearSettlement() {
     int current_minutes = utc_tm.tm_hour * 60 + utc_tm.tm_min;
     auto settlement_times = Config::getInstance().getSettlementTimesUTC();
     int pre_minutes = Config::getInstance().getPreSettlementMinutes();
+
+    // 找到下一個結算時間
     for (const auto& time_str : settlement_times) {
         std::istringstream ss(time_str);
         int hour, minute;
         char delimiter;
         ss >> hour >> delimiter >> minute;
         int settlement_minutes = hour * 60 + minute;
-        int diff = std::abs(current_minutes - settlement_minutes);
         
-        // 考慮跨日情況
-        if (diff > 720) { // 12時 = 720分鐘
-            diff = 1440 - diff; // 24小時 = 1440分鐘
+        // 計算時間差（考慮跨日情況）
+        int diff = settlement_minutes - current_minutes;
+        if (diff < 0) {
+            diff += 1440; // 24小時 = 1440分鐘
         }
         
+        // 如果在預設時間範圍內
         if (diff <= pre_minutes) {
+            logger.info("距離下次結算時間還有：" + std::to_string(diff) + "分鐘");
             return true;
         }
     }
@@ -578,21 +629,50 @@ std::map<std::string, std::pair<double, double>> TradingModule::getCurrentPositi
     } catch (const std::exception& e) {
         logger.error("獲取倉位信息時發生錯誤: " + std::string(e.what()));
     }
+
+    //排除不支持的交易對
+    for (const auto& symbol : Config::getInstance().getUnsupportedSymbols()) {
+        positionSizes.erase(symbol);
+    }
     
     return positionSizes;
 }
 
 // 處理現有倉位
 void TradingModule::handleExistingPositions(
-    const std::vector<std::string>& currentSymbols,
+    std::map<std::string, std::pair<double, double>>& positionSizes,
     const std::vector<std::pair<std::string, double>>& topRates) {
-    // 把不在topRates的交易對進行關閉
-    for (const auto& symbol : currentSymbols) {
-        if (shouldClosePosition(symbol, topRates)) {
-            logger.info("準備關閉倉位: " + symbol);
+    
+    logger.info("開始處理現有倉位...");
+    
+    // 建立 topRates 的 symbol 集合，用於快速查找
+    std::set<std::string> topSymbols;
+    for (const auto& [symbol, rate] : topRates) {
+        topSymbols.insert(symbol);
+    }
+    
+    // 檢查每個現有倉位
+    std::vector<std::string> positionsToClose;
+    for (const auto& [symbol, sizes] : positionSizes) {
+        double spotSize = sizes.first;
+        double contractSize = sizes.second;
+        
+        // 如果該幣對不在 topRates 中，則加入關閉列表
+        if (topSymbols.find(symbol) == topSymbols.end()) {
             
-            // 獲取現貨和合約倉位數量
-            auto positionSizes = getCurrentPositionSizes();
+            std::stringstream ss;
+            ss << "準備關閉 " << symbol << " 倉位 "
+               << "(現貨: " << spotSize 
+               << ", 合約: " << contractSize << ")";
+            logger.info(ss.str());
+            
+            positionsToClose.push_back(symbol);
+        }
+    }
+    
+    // 關閉需要關閉的倉位
+    for (const auto& symbol : positionsToClose) {
+        try {
             auto it = positionSizes.find(symbol);
             if (it == positionSizes.end()) continue;
             
@@ -603,9 +683,11 @@ void TradingModule::handleExistingPositions(
             if (spotSize > 0) {
                 spotSize = adjustSpotPrecision(spotSize, symbol);
                 if (spotSize >= getMinOrderSize(symbol)) {
+                    logger.info("關閉 " + symbol + " 現貨倉位: " + std::to_string(spotSize));
                     bool success = exchange.createSpotOrder(symbol, "Sell", spotSize);
                     if (!success) {
                         logger.error("關閉現貨倉位失敗: " + symbol);
+                        continue;  // 如果現貨關閉失敗，不執行合約關閉
                     }
                 }
             }
@@ -614,13 +696,32 @@ void TradingModule::handleExistingPositions(
             if (contractSize > 0) {
                 contractSize = adjustContractPrecision(contractSize, symbol);
                 if (contractSize >= getMinOrderSize(symbol)) {
-                    Json::Value result = exchange.createOrder(symbol, "Buy", contractSize, "linear", "MARKET");
+                    logger.info("關閉 " + symbol + " 合約倉位: " + std::to_string(contractSize));
+                    Json::Value result = exchange.createOrder(
+                        symbol, "Buy", contractSize, "linear", "MARKET");
                     if (result["retCode"].asInt() != 0) {
                         logger.error("關閉合約倉位失敗: " + symbol);
                     }
                 }
             }
+            
+            // 等待訂單執行
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            
+            // 從 positionSizes 中移除該倉位
+            positionSizes.erase(symbol);
+            
+        } catch (const std::exception& e) {
+            logger.error("處理 " + symbol + " 倉位時發生錯誤: " + std::string(e.what()));
+            continue;
         }
+    }
+    
+    // 輸出處理結果
+    if (positionsToClose.empty()) {
+        logger.info("沒有需要關閉的倉位");
+    } else {
+        logger.info("完成關閉 " + std::to_string(positionsToClose.size()) + " 個倉位");
     }
 }
 
@@ -650,7 +751,7 @@ void TradingModule::balancePositions(
     }
     
     // 計算當前總倉位價值
-    double totalPositionValue = calculateTotalPositionValue(positionSizes);
+    double totalPositionValue = calculateTotalPositionValue(positionSizes, true, nullptr);
     logger.info("當前總倉位價值: " + std::to_string(totalPositionValue) + " USDT");
     
     for (const auto& [symbol, rate] : topRates) {
@@ -670,7 +771,7 @@ void TradingModule::balancePositions(
             
             auto balanceCheck = checkPositionBalance(symbol, existingSpotSize, existingContractSize);
             
-            // 如果不需要平衡，跳過
+            // 果不需要平衡，跳過
             if (!balanceCheck.needBalance) {
                 continue;
             }
@@ -711,6 +812,7 @@ bool TradingModule::executeHedgePosition(
     const BalanceCheckResult& balanceCheck,
     std::map<std::string, std::pair<double, double>>& positionSizes) {
     
+    logger.info("開始執行對衝交易平衡: " + symbol); 
     try {
         // 1. 檢查是否需要平衡
         if (!balanceCheck.needBalance) {
@@ -839,35 +941,47 @@ TradingModule::BalanceCheckResult TradingModule::checkPositionBalance(const std:
     // 根據是否支援現貨保證金來計算倉位總價值
     double pairValue;
     if (isSpotMarginTradingEnabled) {
-        // 如果支援現貨保證金，總價值為現貨和合約的平均值
         pairValue = (spotValue + contractValue) / 2;
         logger.info("支援現貨保證金，使用平均倉位價值計算");
     } else {
-        // 如果不支援現貨保證金，總價值為現貨和合約的總和
         pairValue = spotValue + contractValue;
-        logger.info("不支援現貨保證金，使用總倉位價值計算");
+        logger.info("不支援現貨保證金，使用對衝組合總倉位價值計算");
     }
     
     logger.info("倉位價值計算:");
     logger.info("- 現貨價值: " + std::to_string(spotValue) + " USDT");
     logger.info("- 合約價值: " + std::to_string(contractValue) + " USDT");
-    logger.info("- 總倉位價值: " + std::to_string(pairValue) + " USDT");
+    logger.info("- 對衝組合總倉位價值: " + std::to_string(pairValue) + " USDT");
     
     // 4. 檢查倉位價值是否在允許範圍內
     bool valueInRange = (pairValue >= minPositionValue && pairValue <= maxPositionValue);
 
+    // 5. 計算預測倉位大小 (使用最小倉位價值)
+    double predictedSpotSize = minPositionValue / spotPrice;
+    double predictedContractSize = minPositionValue / contractPrice;
+    
     // 6. 計算價格差
     result.priceDiff = std::abs(spotPrice - contractPrice) / spotPrice;
     
-    // 7. 計算深度影響
-    double predictedSize = 100;
-    auto orderbook = exchange.getOrderBook(symbol);
-    result.depthImpact = calculateDepthImpact(orderbook, predictedSize);
+    // 7. 分別計算現貨和合約的深度影響
+    auto spotOrderbook = exchange.getSpotOrderBook(symbol);
+    auto contractOrderbook = exchange.getContractOrderBook(symbol);
+    
+    double spotDepthImpact = calculateDepthImpact(spotOrderbook, predictedSpotSize);
+    double contractDepthImpact = calculateDepthImpact(contractOrderbook, predictedContractSize);
+    
+    // 使用較大的深度影響作為最終結果
+    result.depthImpact = std::max(spotDepthImpact, contractDepthImpact);
     
     // 8. 計算預估成本和預期收益
-    result.estimatedCost = calculateRebalanceCost(symbol, predictedSize);
+    double spotCost = calculateRebalanceCost(symbol, predictedSpotSize, true, spotOrderbook );  // true 表示現貨
+    double contractCost = calculateRebalanceCost(symbol, predictedContractSize, false, contractOrderbook); // false 表示合約
+    result.estimatedCost = spotCost + contractCost;
+    
     double fundingRate = exchange.getCurrentFundingRate(symbol);
-    result.expectedProfit = calculateExpectedProfit(predictedSize, fundingRate);
+    // 使用較小的倉位大小計算預期收益（保守估計）
+    double minSize = std::min(predictedSpotSize, predictedContractSize);
+    result.expectedProfit = calculateExpectedProfit(minSize, fundingRate);
     
     // 9. 判斷是否需要重平衡
     const double PRICE_DIFF_THRESHOLD = 0.001;    // 0.1% 價格差異閾值
@@ -888,9 +1002,15 @@ TradingModule::BalanceCheckResult TradingModule::checkPositionBalance(const std:
                " (" + std::to_string(contractValue) + " USDT)");
     logger.info("- 倉位數量對等: " + std::string(sizeBalanced ? "是" : "否"));
     logger.info("- 倉位價值在範圍內: " + std::string(valueInRange ? "是" : "否"));
+    logger.info("- 預測現貨倉位: " + std::to_string(predictedSpotSize));
+    logger.info("- 預測合約倉位: " + std::to_string(predictedContractSize));
     logger.info("- 價格差異: " + std::to_string(result.priceDiff * 100) + "%");
-    logger.info("- 深度影響: " + std::to_string(result.depthImpact * 100) + "%");
-    logger.info("- 預估成本: " + std::to_string(result.estimatedCost) + " USDT");
+    logger.info("- 現貨深度影響: " + std::to_string(spotDepthImpact * 100) + "%");
+    logger.info("- 合約深度影響: " + std::to_string(contractDepthImpact * 100) + "%");
+    logger.info("- 最終深度影響: " + std::to_string(result.depthImpact * 100) + "%");
+    logger.info("- 現貨預估成本: " + std::to_string(spotCost) + " USDT");
+    logger.info("- 合約預估成本: " + std::to_string(contractCost) + " USDT");
+    logger.info("- 總預估成本: " + std::to_string(result.estimatedCost) + " USDT");
     logger.info("- 預期收益: " + std::to_string(result.expectedProfit) + " USDT");
     logger.info("- 需要重平衡: " + std::string(result.needBalance ? "是" : "否"));
     
@@ -964,23 +1084,63 @@ double TradingModule::calculateDepthImpact(const Json::Value& orderbook, double 
 }
 
 // 計算平衡成本
-double TradingModule::calculateRebalanceCost(const std::string& symbol, double size) {
-    // 獲取交易費率
-    double spotFeeRate = exchange.getSpotFeeRate();
-    double contractFeeRate = exchange.getContractFeeRate();
-    logger.info("現貨手續費率: " + std::to_string(spotFeeRate));
-    logger.info("合約手續費率: " + std::to_string(contractFeeRate));
-    
-    // 獲取當前價格
-    double currentPrice = exchange.getSpotPrice(symbol);
-    
-    // 計算總成本（包括手續費和滑點）
-    double tradingFee = size * currentPrice * (spotFeeRate + contractFeeRate);
-    double slippage = size * currentPrice * 0.0005; // 假設0.05%的滑點
-    logger.info("交易費用: " + std::to_string(tradingFee));
-    logger.info("滑點: " + std::to_string(slippage));
-    
-    return tradingFee + slippage;
+double TradingModule::calculateRebalanceCost(const std::string& symbol, double size, bool isSpot, const Json::Value& orderbook) {
+    try {
+        
+        // 檢查訂單簿數據是否有效
+        if (!orderbook.isObject() || !orderbook["result"].isObject() || 
+            !orderbook["result"]["a"].isArray() || orderbook["result"]["a"].empty()) {
+            logger.error(std::string(isSpot ? "現貨" : "合約") + "訂單簿數據無效");
+            return 0.0;
+        }
+
+        // 獲取對應的手續費率
+        double feeRate = isSpot ? exchange.getSpotFeeRate() : exchange.getContractFeeRate();
+        
+        // 計算滑點成本
+        double remainingSize = size;
+        double totalCost = 0.0;
+        const Json::Value& asks = orderbook["result"]["a"];
+        double basePrice = std::stod(asks[0][0].asString());  // 最佳賣價作為基準價格
+        
+        for (const auto& level : asks) {
+            if (!level.isArray() || level.size() < 2) continue;
+            
+            double price = std::stod(level[0].asString());
+            double quantity = std::stod(level[1].asString());
+            
+            if (remainingSize <= quantity) {
+                // 最後一筆訂單
+                totalCost += remainingSize * (price - basePrice);
+                break;
+            } else {
+                // 完全吃掉這一層深度
+                totalCost += quantity * (price - basePrice);
+                remainingSize -= quantity;
+            }
+        }
+        
+        // 計算手續費成本
+        double tradingFee = size * basePrice * feeRate;
+        
+        // 總成本 = 滑點成本 + 手續費成本
+        double totalRebalanceCost = totalCost + tradingFee;
+        
+        // 記錄詳細成本信息
+        logger.info(std::string(isSpot ? "現貨" : "合約") + "重平衡成本計算:");
+        logger.info("- 基準價格: " + std::to_string(basePrice) + " USDT");
+        logger.info("- 交易數量: " + std::to_string(size));
+        logger.info("- 滑點成本: " + std::to_string(totalCost) + " USDT");
+        logger.info("- 手續費率: " + std::to_string(feeRate * 100) + "%");
+        logger.info("- 手續費成本: " + std::to_string(tradingFee) + " USDT");
+        logger.info("- 總成本: " + std::to_string(totalRebalanceCost) + " USDT");
+        
+        return totalRebalanceCost;
+        
+    } catch (const std::exception& e) {
+        logger.error("計算重平衡成本時發生錯誤: " + std::string(e.what()));
+        return 0.0;
+    }
 }
 
 // 計算預期收益
@@ -1009,50 +1169,62 @@ bool TradingModule::createSpotOrderIncludeFee(const std::string& symbol, const s
 
 // 計算總倉位價值
 double TradingModule::calculateTotalPositionValue(
-    const std::map<std::string, std::pair<double, double>>& symbolValues) {
+    const std::map<std::string, std::pair<double, double>>& positions,
+    bool positionsIsSize = false,
+    const std::map<std::string, std::pair<double, double>>* prices = nullptr) {
     
     double totalValue = 0.0;
     const bool isSpotMarginTradingEnabled = Config::getInstance().isSpotMarginTradingEnabled();
     
-    for (const auto& [symbol, values] : symbolValues) {
-        if (isSpotMarginTradingEnabled) {
-            // 如果支援現貨保證金，使用平均值
-            totalValue += (values.first + values.second) / 2;
-        } else {
-            // 如果不支援現貨保證金，使用總和
-            totalValue += values.first + values.second;
-        }
-    }
-    
-    logger.info("總倉位價值: " + std::to_string(totalValue) + " USDT" + 
-                (isSpotMarginTradingEnabled ? " (使用平均值計算)" : " (使用總和計算)"));
-    
-    return totalValue;
-}
-
-double TradingModule::calculateTotalPositionValue(
-    const std::map<std::string, std::pair<double, double>>& symbolSizes,
-    const std::map<std::string, std::pair<double, double>>& symbolPrices) {
-    
-    double totalValue = 0.0;
-    const bool isSpotMarginTradingEnabled = Config::getInstance().isSpotMarginTradingEnabled();
-    
-    for (const auto& [symbol, sizes] : symbolSizes) {
-        auto priceIt = symbolPrices.find(symbol);
-        if (priceIt != symbolPrices.end()) {
-            double spotPrice = priceIt->second.first;
-            double contractPrice = priceIt->second.second;
-            if (spotPrice > 0) {
-                double spotValue = sizes.first * spotPrice;
-                logger.info("現貨價值: " + std::to_string(sizes.first) + "*" + std::to_string(spotPrice) + "=" + std::to_string(spotValue) + " USDT");
-                double contractValue = sizes.second * contractPrice;
-                logger.info("合約價值: " + std::to_string(sizes.second) + "*" + std::to_string(contractPrice) + "=" + std::to_string(contractValue) + " USDT");
-                if (isSpotMarginTradingEnabled) {
-                    totalValue += (spotValue + contractValue) / 2;
-                } else {
-                    totalValue += (spotValue + contractValue);
+    for (const auto& [symbol, position] : positions) {
+        double spotValue = 0.0;
+        double contractValue = 0.0;
+        
+        // 根據不同情況計算倉位價值
+        if (positionsIsSize && prices != nullptr) {
+            // 使用提供的價格
+            auto priceIt = prices->find(symbol);
+            if (priceIt != prices->end()) {
+                double spotPrice = priceIt->second.first;
+                double contractPrice = priceIt->second.second;
+                
+                if (spotPrice > 0) {
+                    spotValue = position.first * spotPrice;
+                    contractValue = position.second * contractPrice;
+                    
+                    logger.debug(symbol + " 倉位計算: " 
+                        + "現貨=" + std::to_string(spotValue) + " USDT"
+                        + " (" + std::to_string(position.first) + "*" + std::to_string(spotPrice) + ")"
+                        + ", 合約=" + std::to_string(contractValue) + " USDT"
+                        + " (" + std::to_string(position.second) + "*" + std::to_string(contractPrice) + ")");
                 }
             }
+        } else if (!positionsIsSize && prices == nullptr) {
+            // position 已經包含價值
+            spotValue = position.first;
+            contractValue = position.second;
+        } else {
+            // 需要從交易所獲取即時價格
+            double spotPrice = exchange.getSpotPrice(symbol);
+            double contractPrice = exchange.getContractPrice(symbol);
+            
+            if (spotPrice > 0) {
+                spotValue = position.first * spotPrice;
+                contractValue = position.second * contractPrice;
+                
+                logger.debug(symbol + " 倉位計算: " 
+                    + "現貨=" + std::to_string(spotValue) + " USDT"
+                    + " (" + std::to_string(position.first) + "*" + std::to_string(spotPrice) + ")"
+                    + ", 合約=" + std::to_string(contractValue) + " USDT"
+                    + " (" + std::to_string(position.second) + "*" + std::to_string(contractPrice) + ")");
+            }
+        }
+        
+        // 根據模式計算總價值
+        if (isSpotMarginTradingEnabled) {
+            totalValue += (spotValue + contractValue) / 2;
+        } else {
+            totalValue += spotValue + contractValue;
         }
     }
     
@@ -1181,7 +1353,7 @@ void TradingModule::displayPositions() {
     }
     
     // 計算總倉位價值
-    totalValue = calculateTotalPositionValue(symbolValues);
+    totalValue = calculateTotalPositionValue(symbolValues, false, nullptr);
     
     // 顯示匯總信息
     std::cout << std::string(120, '-') << std::endl;
@@ -1194,5 +1366,124 @@ void TradingModule::displayPositions() {
         std::cout << "賬戶總權益: " << std::fixed << std::setprecision(2) << equity << " USDT" << std::endl;
         double utilizationRate = (totalValue / equity) * 100;
         std::cout << "倉位使用率: " << std::fixed << std::setprecision(2) << utilizationRate << "%" << std::endl;
+    }
+}
+
+std::vector<std::string> TradingModule::getSymbolsByCMC(int topCount) {
+    Logger logger;
+    std::vector<std::string> selectedSymbols;
+    const Config& config = Config::getInstance();
+    
+    
+    try {
+        CURL* curl = curl_easy_init();
+        if (!curl) {
+            logger.error("無法初始化 CURL");
+            return {};
+        }
+        const std::string& sortBy = config.getCMCSortBy();
+        logger.info("開始從 CMC 獲取交易對列表 " + std::to_string(topCount) + " 個，排序方式: " + sortBy);
+
+        
+        // 設置 API 請求
+        std::string apiKey = config.getCMCApiKey();
+        std::string url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?sort=" + sortBy + "&limit=" 
+        + std::to_string(topCount) + "&aux=" + sortBy;
+        logger.debug("請求 URL: " + url);
+        
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, ("X-CMC_PRO_API_KEY: " + apiKey).c_str());
+        headers = curl_slist_append(headers, "Accept: application/json");
+        
+        std::string response;
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+        
+        CURLcode res = curl_easy_perform(curl);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        
+        if (res != CURLE_OK) {
+            logger.error("CMC API 請求失敗: " + std::string(curl_easy_strerror(res)));
+            return {};
+        }
+        
+        logger.debug("收到 CMC 響應，長度: " + std::to_string(response.length()));
+        // logger.debug("收到 CMC 響應: " + response);
+
+        
+        // 解析 JSON 響應
+        Json::Value root;
+        Json::Reader reader;
+        if (!reader.parse(response, root)) {
+            logger.error("解析 CMC 響應失敗");
+            logger.debug("響應內容: " + response);
+            return {};
+        }
+        
+        // 檢查錯誤狀態
+        if (root.isMember("status")) {
+            logger.debug("API 狀態: " + root["status"]["error_message"].asString());
+        }
+        
+        // 處理數據
+        if (root["data"].isArray()) {
+            
+            for (const auto& coin : root["data"]) {
+                if (selectedSymbols.size() >= static_cast<size_t>(topCount)) {
+                    logger.debug("已達到設定的 Top " + std::to_string(topCount) + " 數量，停止處理");
+                    break;
+                }
+                
+                std::string symbol = coin["symbol"].asString() + "USDT";
+                // double sortByValue = coin["quote"]["USD"][sortBy].asDouble();
+                // logger.debug(symbol + " - " + sortBy + ": " + std::to_string(sortByValue));
+                selectedSymbols.push_back(symbol);
+            }
+            
+            // 顯示選中的交易對
+            logger.info("根據 " + sortBy + " 排序選擇了 " + 
+                       std::to_string(selectedSymbols.size()) + " 個交易對:");
+            for (const auto& symbol : selectedSymbols) {
+                logger.info("- " + symbol);
+            }
+        } else {
+            logger.error("CMC 響應中沒有找到數據數組");
+            logger.debug("響應內容: " + response);
+        }
+        
+    } catch (const std::exception& e) {
+        logger.error("獲取 CMC 數據時發生錯誤: " + std::string(e.what()));
+    }
+    
+    return selectedSymbols;
+}
+
+size_t TradingModule::writeCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    ((std::string*)userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+
+void TradingModule::displayPositionSizes(
+    const std::map<std::string, std::pair<double, double>>& positionSizes) {
+    
+    if (!positionSizes.empty()) {
+        std::cout << "\n=== 保留的倉位 ===" << std::endl;
+        for (const auto& [symbol, sizes] : positionSizes) {
+            double spotSize = sizes.first;
+            double contractSize = sizes.second;
+            // 格式化輸出
+            std::cout << std::left 
+                     << std::setw(12) << symbol 
+                     << "現貨: " << std::setw(10) << std::fixed << std::setprecision(4) << spotSize
+                     << "合約: " << std::setw(10) << std::fixed << std::setprecision(4) << contractSize
+                     << std::endl;
+        }
+        std::cout << std::endl;
+    } else {
+        logger.info("所有倉位已清空");
     }
 }
