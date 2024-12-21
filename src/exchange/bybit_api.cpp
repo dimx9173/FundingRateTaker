@@ -246,7 +246,7 @@ std::vector<std::pair<std::string, std::vector<double>>> BybitAPI::getFundingHis
                     double fundingRate = std::stod(rate["fundingRate"].asString());
                     symbolRates.push_back(fundingRate);
                 } catch (const std::exception& e) {
-                    logger.error("��析資金費率敗: " + symbol + " - " + e.what());
+                    logger.error("解析資金費率失敗: " + symbol + " - " + e.what());
                     continue;
                 }
             }
@@ -389,108 +389,6 @@ double BybitAPI::getSpotPrice(const std::string& symbol) {
         return std::stod(response["result"]["list"][0]["lastPrice"].asString());
     }
     return 0.0;
-}
-
-void BybitAPI::displayPositions() {
-    Logger logger;
-    
-    // 獲取合約倉位
-    Json::Value futuresPositions = getPositions();
-    
-    // 獲取現貨餘額
-    std::map<std::string, std::string> params;
-    params["accountType"] = "UNIFIED";
-    Json::Value spotBalances = makeRequest("/v5/account/wallet-balance", "GET", params);
-    
-    // 顯示邏輯保持不變
-    std::cout << "\n=== 當前持倉狀態 ===" << std::endl;
-    std::cout << std::left
-              << std::setw(12) << "幣對"
-              << std::setw(10) << "類型"
-              << std::setw(10) << "方向"
-              << std::setw(15) << "數量"
-              << std::setw(15) << "未實現盈虧"
-              << std::setw(15) << "倉位價值"
-              << std::endl;
-    std::cout << std::string(77, '-') << std::endl;
-    
-    double totalValue = 0.0;
-    double totalPnL = 0.0;
-    
-    // 顯示合約倉位
-    if (futuresPositions.isObject() && futuresPositions["result"]["list"].isArray()) {
-        for (const auto& pos : futuresPositions["result"]["list"]) {
-            try {
-                double size = std::stod(pos["size"].asString());
-                if (size <= 0) continue;
-                
-                std::cout << std::left
-                          << std::setw(12) << pos["symbol"].asString()
-                          << std::setw(10) << "合約"
-                          << std::setw(10) << pos["side"].asString()
-                          << std::setw(15) << std::fixed << std::setprecision(4) << size
-                          << std::setw(15) << std::fixed << std::setprecision(2) 
-                          << std::stod(pos["unrealisedPnl"].asString())
-                          << std::setw(15) << std::fixed << std::setprecision(2) 
-                          << std::stod(pos["positionValue"].asString())
-                          << std::endl;
-                
-                totalValue += std::stod(pos["positionValue"].asString());
-                totalPnL += std::stod(pos["unrealisedPnl"].asString());
-            } catch (const std::exception& e) {
-                logger.error("解析合約倉數據失敗: " + std::string(e.what()));
-                continue;
-            }
-        }
-    }
-    
-    // 修改現貨餘額的解析邏輯
-    if (spotBalances.isObject() && spotBalances["result"]["list"].isArray()) {
-        const auto& list = spotBalances["result"]["list"][0]["coin"];
-        if (list.isArray()) {
-            for (const auto& coin : list) {
-                try {
-                    std::string symbol = coin["coin"].asString();
-                    if (symbol == "USDT") continue;
-                    
-                    double size = std::stod(coin["walletBalance"].asString());
-                    if (size <= 0) continue;
-                    
-                    std::string pairSymbol = symbol + "USDT";
-                    double spotPrice = getSpotPrice(pairSymbol);
-                    double positionValue = size * spotPrice;
-                    
-                    if (positionValue > 0) {
-                        std::cout << std::left
-                                  << std::setw(12) << pairSymbol
-                                  << std::setw(10) << "現貨"
-                                  << std::setw(10) << "Buy"
-                                  << std::setw(15) << std::fixed << std::setprecision(4) << size
-                                  << std::setw(15) << std::fixed << std::setprecision(2) << 0.0
-                                  << std::setw(15) << std::fixed << std::setprecision(2) << positionValue
-                                  << std::endl;
-                        
-                        totalValue += positionValue;
-                    }
-                } catch (const std::exception& e) {
-                    logger.error("解析現貨餘額數據失敗: " + std::string(e.what()));
-                    continue;
-                }
-            }
-        }
-    }
-    
-    // 顯示匯總信息部分保持不變
-    std::cout << std::string(77, '-') << std::endl;
-    std::cout << "總倉位價值: " << std::fixed << std::setprecision(2) << totalValue << " USDT" << std::endl;
-    std::cout << "總未實現盈虧: " << std::fixed << std::setprecision(2) << totalPnL << " USDT" << std::endl;
-    
-    double equity = getTotalEquity();
-    if (equity > 0) {
-        std::cout << "賬戶總權益: " << std::fixed << std::setprecision(2) << equity << " USDT" << std::endl;
-        double utilizationRate = (totalValue / equity) * 100;
-        std::cout << "倉位使用率: " << std::fixed << std::setprecision(2) << utilizationRate << "%" << std::endl;
-    }
 }
 
 std::vector<std::string> BybitAPI::getInstruments(const std::string& category) {
@@ -656,4 +554,20 @@ double BybitAPI::getContractFeeRate() {
     
     // 如果API請求失敗，返回預設值
     return 0.0006; // 0.06% 作為預設值
+}
+
+double BybitAPI::getMarginRatio(const std::string& symbol) {
+    // 從API獲取保證金率
+    std::map<std::string, std::string> params;
+    params["symbol"] = symbol;
+    
+    Json::Value response = makeRequest("/v5/account/collateral-info", "GET", params);
+    
+    if (response.isObject() && response["retCode"].asInt() == 0 && 
+        response["result"]["list"].isArray() && !response["result"]["list"].empty()) {
+        return std::stod(response["result"]["list"][0]["collateralRatio"].asString());
+    }
+    
+    // 如果無法獲取，返回默認值
+    return 0.8; // 默認80%保證金率
 }

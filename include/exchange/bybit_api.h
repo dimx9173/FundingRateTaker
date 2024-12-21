@@ -38,7 +38,6 @@ public:
                         const std::string& side, 
                         double qty) override;
     void closePosition(const std::string& symbol) override;
-    void displayPositions() override;
     std::vector<std::string> getInstruments(const std::string& category = "linear") override;
     Json::Value getSpotBalances() override;
     double getSpotBalance(const std::string& symbol) override;
@@ -49,6 +48,7 @@ public:
     double getCurrentFundingRate(const std::string& symbol) override;
     double getSpotFeeRate() override;
     double getContractFeeRate() override;
+    double getMarginRatio(const std::string& symbol) override;
 };
 
 #endif // BYBIT_API_H

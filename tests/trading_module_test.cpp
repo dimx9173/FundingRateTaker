@@ -28,6 +28,7 @@ public:
     MOCK_METHOD0(displayPositions, void());
     MOCK_METHOD0(getSpotBalances, Json::Value());
     MOCK_METHOD1(getSpotBalance, double(const std::string&));
+    MOCK_METHOD1(getMarginRatio, double(const std::string&));
     // 新增方法實現
     double getContractPrice(const std::string& symbol) override {
         return 100.0; // 模擬價格
@@ -68,6 +69,7 @@ protected:
             .WillByDefault(::testing::Return(10000.0));
         ON_CALL(*mockExchange, getInstruments(::testing::_))
             .WillByDefault(::testing::Return(std::vector<std::string>{"BTCUSDT", "ETHUSDT"}));
+        
     }
 
     void TearDown() override {

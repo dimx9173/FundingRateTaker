@@ -62,7 +62,10 @@ private:
         const BalanceCheckResult& balanceCheck,
         std::map<std::string, std::pair<double, double>>& positionSizes);
     double calculateTotalPositionValue(
-        const std::map<std::string, std::pair<double, double>>& positionSizes);
+        const std::map<std::string, std::pair<double, double>>& symbolSizes,
+        const std::map<std::string, std::pair<double, double>>& symbolPrices);
+    double calculateTotalPositionValue(
+        const std::map<std::string, std::pair<double, double>>& symbolSizes);
 public:
     static TradingModule& getInstance(IExchange& exchange);
     std::vector<std::pair<std::string, double>> getTopFundingRates();
@@ -72,6 +75,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         instance.reset();
     }
+    void displayPositions();
 };
 
 #endif // TRADING_MODULE_H

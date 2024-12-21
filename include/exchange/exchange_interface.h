@@ -16,7 +16,6 @@ public:
     virtual double getTotalEquity() = 0;
     virtual Json::Value getPositions(const std::string& symbol = "") = 0;
     virtual std::vector<std::string> getInstruments(const std::string& category = "linear") = 0;
-    virtual void displayPositions() = 0;    
 
     // 交易操作
     virtual bool setLeverage(const std::string& symbol, int leverage) = 0;
@@ -40,6 +39,7 @@ public:
     virtual double getCurrentFundingRate(const std::string& symbol) = 0;
     virtual double getSpotFeeRate() = 0;
     virtual double getContractFeeRate() = 0;
+    virtual double getMarginRatio(const std::string& symbol) = 0;
 };
 
 #endif // EXCHANGE_INTERFACE_H 
